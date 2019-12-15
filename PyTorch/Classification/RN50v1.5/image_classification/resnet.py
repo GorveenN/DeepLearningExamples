@@ -3,6 +3,9 @@ import torch
 import torch.nn as nn
 import numpy as np
 
+from pruning.gate_layer import GateLayer
+from pruning.model_backbone import ModelBackbone
+
 __all__ = ['ResNet', 'build_resnet', 'resnet_versions', 'resnet_configs']
 
 # ResNetBuilder {{{
@@ -72,7 +75,7 @@ class ResNetBuilder(object):
 # ResNetBuilder }}}
 
 # BasicBlock {{{
-class BasicBlock(nn.Module):
+class BasicBlock(ModelBackbone):
     M = 2
     expansion = 1
 
@@ -81,8 +84,10 @@ class BasicBlock(nn.Module):
         self.conv1 = builder.conv3x3(inplanes, planes, stride)
         self.bn1 = builder.batchnorm(planes)
         self.relu = builder.activation()
+        self.gate1 = GateLayer(planes, planes,  [1, -1, 1, 1])
         self.conv2 = builder.conv3x3(planes, planes)
         self.bn2 = builder.batchnorm(planes, last_bn=True)
+        self.gate2 = GateLayer(planes, planes, [1, -1, 1, 1])
         self.downsample = downsample
         self.stride = stride
 
@@ -93,12 +98,14 @@ class BasicBlock(nn.Module):
         if self.bn1 is not None:
             out = self.bn1(out)
 
+        out = self.gate1(out)
         out = self.relu(out)
 
         out = self.conv2(out)
 
         if self.bn2 is not None:
             out = self.bn2(out)
+        out = self.gate2(out)
 
         if self.downsample is not None:
             residual = self.downsample(x)
@@ -110,7 +117,7 @@ class BasicBlock(nn.Module):
 # BasicBlock }}}
 
 # Bottleneck {{{
-class Bottleneck(nn.Module):
+class Bottleneck(ModelBackbone):
     M = 3
     expansion = 4
 
@@ -118,8 +125,10 @@ class Bottleneck(nn.Module):
         super(Bottleneck, self).__init__()
         self.conv1 = builder.conv1x1(inplanes, planes)
         self.bn1 = builder.batchnorm(planes)
+        self.gate1 = GateLayer(planes, planes, [1, -1, 1, 1])
         self.conv2 = builder.conv3x3(planes, planes, stride=stride)
         self.bn2 = builder.batchnorm(planes)
+        self.gate2 = GateLayer(planes, planes, [1, -1, 1, 1])
         self.conv3 = builder.conv1x1(planes, planes * self.expansion)
         self.bn3 = builder.batchnorm(planes * self.expansion, last_bn=True)
         self.relu = builder.activation()
@@ -131,10 +140,12 @@ class Bottleneck(nn.Module):
 
         out = self.conv1(x)
         out = self.bn1(out)
+        out = self.gate1(out)
         out = self.relu(out)
 
         out = self.conv2(out)
         out = self.bn2(out)
+        out = self.gate2(out)
         out = self.relu(out)
 
         out = self.conv3(out)
