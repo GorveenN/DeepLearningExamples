@@ -17,6 +17,11 @@ import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 
+from pruning.pruner import Pruner
+from pruning.criterias import taylor_fo_bn_crit
+from pruning.criterias import taylor_fo_crit
+from pruning.criterias import taylor_on_gate_crit
+
 try:
     from apex.parallel import DistributedDataParallel as DDP
     from apex.fp16_utils import *
@@ -126,6 +131,49 @@ def add_parser_arguments(parser):
     parser.add_argument('--no-checkpoints', action='store_false', dest='save_checkpoints')
 
     parser.add_argument('--workspace', type=str, default='./')
+
+    # PRUNING ARGS
+
+    # Mode
+    parser.add_argument(
+        "--mode", type=str, default="training", choices=["training", "pruning"],
+    )
+
+    # Other
+    # parser.add_argument("--no-cuda", action="store_true", help="use available GPUs")
+    # parser.add_argument(
+        # "--seed", "-s", type=int, help="manually set random seed for torch"
+    # )
+
+    # parser.add_argument(
+        # "--results_path", default="results/", help="Folder to store results of run"
+    # )
+
+    # Hyperparameters
+    # parser.add_argument(
+        # "--save", action="store_true", help="Save checkpoints",
+    # )
+
+    # Pruning
+    parser.add_argument(
+        "--no_prune",
+        type=int,
+        required=False,
+        default=10,
+        help="Number of neurons to prune every pruning step",
+    )
+    parser.add_argument(
+        "--prune_freq",
+        type=int,
+        default=10,
+        help="Number of epochs between pruning steps",
+    )
+    parser.add_argument(
+        "--prune_max",
+        type=int,
+        default=-1,
+        help="Pruner won't prune neurons above that threshold"
+    )
 
 
 def main(args):
@@ -277,6 +325,11 @@ def main(args):
 
     model_and_loss.load_model_state(model_state)
 
+
+    prune_criterion = taylor_fo_crit
+    pruner = Pruner(model_and_loss, prune_criterion) if args.mode == "pruning" else None
+
+
     train_loop(
         model_and_loss, optimizer,
         lr_policy,
@@ -285,7 +338,8 @@ def main(args):
         batch_size_multiplier = batch_size_multiplier,
         start_epoch = args.start_epoch, best_prec1 = best_prec1, prof=args.prof,
         skip_training = args.evaluate, skip_validation = args.training_only,
-        save_checkpoints=args.save_checkpoints and not args.evaluate, checkpoint_dir=args.workspace)
+        save_checkpoints=args.save_checkpoints and not args.evaluate, checkpoint_dir=args.workspace,
+        pruner=pruner, prune_freq=args.prune_freq, prune_per_iter=args.no_prune, prune_max=args.prune_max)
     exp_duration = time.time() - exp_start_time
     if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
         logger.end()
