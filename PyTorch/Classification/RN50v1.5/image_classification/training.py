@@ -8,6 +8,8 @@ from . import logger as log
 from . import resnet as models
 from . import utils
 
+from pruning.pruner import pruner
+
 try:
     from apex.parallel import DistributedDataParallel as DDP
     from apex.fp16_utils import *
@@ -167,6 +169,8 @@ def get_train_step(model_and_loss, optimizer, fp16, use_amp = False, batch_size_
         target_var = Variable(target)
         loss, output = model_and_loss(input_var, target_var)
         prec1, prec5 = torch.zeros(1), torch.zeros(1) #utils.accuracy(output.data, target, topk=(1, 5))
+
+
 
         if torch.distributed.is_initialized():
             reduced_loss = utils.reduce_tensor(loss.data)
@@ -328,16 +332,32 @@ def calc_ips(batch_size, time):
 def train_loop(model_and_loss, optimizer, lr_scheduler, train_loader, val_loader, epochs, fp16, logger,
                should_backup_checkpoint, use_amp=False,
                batch_size_multiplier = 1,
-               best_prec1 = 0, start_epoch = 0, prof = -1, skip_training = False, skip_validation = False, save_checkpoints = True, checkpoint_dir='./'):
+               best_prec1 = 0, start_epoch = 0, prof = -1, skip_training = False, skip_validation = False, save_checkpoints = True, checkpoint_dir='./',
+               pruner = None, prune_freq = 10, prune_per_iter = 10, prune_max = 100):
 
     prec1 = -1
+
+    already_pruned = 0
 
     epoch_iter = range(start_epoch, epochs)
     if logger is not None:
         epoch_iter = logger.epoch_generator_wrapper(epoch_iter)
     for epoch in epoch_iter:
         if not skip_training:
+
             train(train_loader, model_and_loss, optimizer, lr_scheduler, fp16, logger, epoch, use_amp = use_amp, prof = prof, register_metrics=epoch==start_epoch, batch_size_multiplier=batch_size_multiplier)
+
+            if pruner is not None:
+                with torch.no_grad():
+                    pruner.accumulate_importance()
+                    # not sure if it's really needed
+                    for p in model_and_loss.model.parameters():
+                        if p.grad is not None:
+                            p.grad.zero_()
+                if epoch % prune_freq == 0 and (prune_max > 0 or already_pruned + prune_per_iter <= prune_max):
+                    pruner.prune(prune_per_iter)
+                    already_pruned += prune_per_iter
+
 
         if not skip_validation:
             prec1 = validate(val_loader, model_and_loss, fp16, logger, epoch, prof = prof, register_metrics=epoch==start_epoch)
