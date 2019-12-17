@@ -8,7 +8,7 @@ from . import logger as log
 from . import resnet as models
 from . import utils
 
-from pruning.pruner import pruner
+from pruning.pruner import Pruner
 
 try:
     from apex.parallel import DistributedDataParallel as DDP
@@ -61,11 +61,15 @@ def get_optimizer(parameters, fp16, lr, momentum, weight_decay,
                   nesterov=False,
                   state=None,
                   static_loss_scale=1., dynamic_loss_scale=False,
-                  bn_weight_decay = False):
+                  bn_weight_decay = False,
+                  prune = False):
 
     if bn_weight_decay:
         print(" ! Weight decay applied to BN parameters ")
-        optimizer = torch.optim.SGD([v for n, v in parameters], lr,
+        optim_params = [v for n, v in parameters]
+        if prune:
+            optim_params = Pruner.filter_gates(optim_params)
+        optimizer = torch.optim.SGD(optim_params, lr,
                                     momentum=momentum,
                                     weight_decay=weight_decay,
                                     nesterov = nesterov)
@@ -73,6 +77,8 @@ def get_optimizer(parameters, fp16, lr, momentum, weight_decay,
         print(" ! Weight decay NOT applied to BN parameters ")
         bn_params = [v for n, v in parameters if 'bn' in n]
         rest_params = [v for n, v in parameters if not 'bn' in n]
+        if prune:
+            rest_params = Pruner.filter_gates(rest_params)
         print(len(bn_params))
         print(len(rest_params))
         optimizer = torch.optim.SGD([{'params': bn_params, 'weight_decay' : 0},
@@ -342,6 +348,7 @@ def train_loop(model_and_loss, optimizer, lr_scheduler, train_loader, val_loader
     epoch_iter = range(start_epoch, epochs)
     if logger is not None:
         epoch_iter = logger.epoch_generator_wrapper(epoch_iter)
+        logger.register_metric('prune', log.EpochMeter(), log_level=0)
     for epoch in epoch_iter:
         if not skip_training:
 
@@ -350,13 +357,10 @@ def train_loop(model_and_loss, optimizer, lr_scheduler, train_loader, val_loader
             if pruner is not None:
                 with torch.no_grad():
                     pruner.accumulate_importance()
-                    # not sure if it's really needed
-                    for p in model_and_loss.model.parameters():
-                        if p.grad is not None:
-                            p.grad.zero_()
                 if epoch % prune_freq == 0 and (prune_max > 0 or already_pruned + prune_per_iter <= prune_max):
                     pruner.prune(prune_per_iter)
                     already_pruned += prune_per_iter
+                    logger.log_metric('prune', prune_per_iter)
 
 
         if not skip_validation:

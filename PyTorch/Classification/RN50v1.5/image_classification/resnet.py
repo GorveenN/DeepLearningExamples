@@ -4,7 +4,6 @@ import torch.nn as nn
 import numpy as np
 
 from pruning.gate_layer import GateLayer
-from pruning.model_backbone import ModelBackbone
 
 __all__ = ['ResNet', 'build_resnet', 'resnet_versions', 'resnet_configs']
 
@@ -75,7 +74,7 @@ class ResNetBuilder(object):
 # ResNetBuilder }}}
 
 # BasicBlock {{{
-class BasicBlock(ModelBackbone):
+class BasicBlock(nn.Module):
     M = 2
     expansion = 1
 
@@ -117,7 +116,7 @@ class BasicBlock(ModelBackbone):
 # BasicBlock }}}
 
 # Bottleneck {{{
-class Bottleneck(ModelBackbone):
+class Bottleneck(nn.Module):
     M = 3
     expansion = 4
 
