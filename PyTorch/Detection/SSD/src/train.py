@@ -16,10 +16,13 @@ from torch.autograd import Variable
 import torch
 import time
 from SSD import _C as C
-
+from src.utils import update_weights
 from apex import amp
+from src.model import ResNet, SSD300
+from src.resnet import Bottleneck, BasicBlock
+import torch.nn as nn
 
-def train_loop(model, loss_func, epoch, optim, train_dataloader, val_dataloader, encoder, iteration, logger, args, mean, std):
+def train_loop(model, loss_func, epoch, optim, train_dataloader, val_dataloader, encoder, iteration, logger, args, mean, std, pruning_engine):
 #     for nbatch, (img, _, img_size, bbox, label) in enumerate(train_dataloader):
     for nbatch, data in enumerate(train_dataloader):
         img = data[0][0][0]
@@ -59,6 +62,12 @@ def train_loop(model, loss_func, epoch, optim, train_dataloader, val_dataloader,
 
         loss = loss_func(ploc, plabel, gloc, glabel)
 
+        if args.pruning:
+            # useful for method 40 and 50 that calculate oracle
+            pruning_engine.run_full_oracle(model, data, gloc, glabel, loss_func, img, initial_loss=loss.item())
+            if pruning_engine.needs_hessian:
+                pruning_engine.compute_hessian(loss)
+
         if args.local_rank == 0:
             logger.update_iter(epoch, iteration, loss.item())
 
@@ -72,6 +81,8 @@ def train_loop(model, loss_func, epoch, optim, train_dataloader, val_dataloader,
             warmup(optim, args.warmup, iteration, args.learning_rate)
 
         optim.step()
+        if args.pruning:
+            pruning_engine.do_step(loss=loss.item(), optimizer=optim)
         optim.zero_grad()
         iteration += 1
 
@@ -211,7 +222,8 @@ def load_checkpoint(model, checkpoint):
 
     # remove proceeding 'N.' from checkpoint that comes from DDP wrapper
     saved_model = od["model"]
-    model.load_state_dict(saved_model)
+    update_weights(model, saved_model)
+
 
 
 def tencent_trick(model):
@@ -222,12 +234,19 @@ def tencent_trick(model):
     Weight decay will be disabled in first group (aka tencent trick).
     """
     decay, no_decay = [], []
-    for name, param in model.named_parameters():
-        if not param.requires_grad:
-            continue  # frozen weights
-        if len(param.shape) == 1 or name.endswith(".bias"):
-            no_decay.append(param)
-        else:
-            decay.append(param)
+    for _, module in enumerate(model.modules()):
+        if (hasattr(module, "do_not_update") or isinstance(module, nn.Sequential) or isinstance(module, nn.ModuleList) or isinstance(module, Bottleneck) or isinstance(module, ResNet) or
+            isinstance(module, BasicBlock) or isinstance(module, SSD300)):
+            continue
+        for name, param in module.named_parameters():
+            if not param.requires_grad:
+                continue
+            if len(param.shape) == 1 or name.endswith(".bias"):
+                no_decay.append(param)
+            else:
+                decay.append(param)
+    print(len(no_decay))
+    print(len(decay))
     return [{'params': no_decay, 'weight_decay': 0.0},
             {'params': decay}]
+

@@ -593,3 +593,9 @@ def draw_patches(img, bboxes, labels, order="xywh", label_map={}):
         ax.text(cx-0.5*w, cy-0.5*h, label, ha="center", va="center", size=15, bbox=bbox_props)
     plt.show()
 
+
+def update_weights(model, pretrained_dict):
+    model_dict = model.state_dict()
+    pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
+    model_dict.update(pretrained_dict)
+    model.load_state_dict(model_dict)

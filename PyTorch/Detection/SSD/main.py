@@ -16,6 +16,7 @@ import os
 import time
 from argparse import ArgumentParser
 import torch
+import torch.nn as nn
 import numpy as np
 from torch.optim.lr_scheduler import MultiStepLR
 import torch.utils.data.distributed
@@ -35,6 +36,8 @@ try:
     from apex.fp16_utils import *
 except ImportError:
     raise ImportError("Please install APEX from https://github.com/nvidia/apex")
+
+from src.pruning_engine import pytorch_pruning, PruningConfigReader, prepare_pruning_list
 
 def generate_mean_std(args):
     mean_val = [0.485, 0.456, 0.406]
@@ -88,6 +91,15 @@ def make_parser():
                         help='momentum argument for SGD optimizer')
     parser.add_argument('--weight-decay', '--wd', type=float, default=0.0005,
                         help='momentum argument for SGD optimizer')
+
+    parser.add_argument('--name', default='test', type=str,
+                        help='experiment name(folder) to store logs')
+
+    parser.add_argument('--pruning_config', default=None, type=str,
+                        help='path to pruning configuration file, will overwrite all pruning parameters in arguments')
+
+    parser.add_argument('--pruning', action='store_true',
+                        help='enable or not pruning, def False')
 
     parser.add_argument('--profile', type=int, default=None)
     parser.add_argument('--warmup', type=int, default=None)
@@ -181,6 +193,7 @@ def train(train_loop_func, logger, args):
         else:
             print('Provided checkpoint is not path to a file')
             return
+    
 
     inv_map = {v: k for k, v in val_dataset.label_map.items()}
 
@@ -194,11 +207,31 @@ def train(train_loop_func, logger, args):
         return
     mean, std = generate_mean_std(args)
 
+    pruning_engine = None
+    if args.pruning:
+        pruning_settings = dict()
+        if not (args.pruning_config is None):
+            pruning_settings_reader = PruningConfigReader()
+            pruning_settings_reader.read_config(args.pruning_config)
+            pruning_settings = pruning_settings_reader.get_parameters()
+
+        pruning_parameters_list = prepare_pruning_list(pruning_settings, ssd300, model_name="ssd",
+                                                       name=args.name)
+        print("Total pruning layers:", len(pruning_parameters_list))
+
+        log_save_folder = "%s" % args.name
+        folder_to_write = "%s" % log_save_folder + "/"
+        log_folder = folder_to_write
+
+        pruning_engine = pytorch_pruning(pruning_parameters_list, pruning_settings=pruning_settings,
+                                         log_folder=log_folder)
+
     for epoch in range(start_epoch, args.epochs):
+        print(epoch)
         start_epoch_time = time.time()
         scheduler.step()
         iteration = train_loop_func(ssd300, loss_func, epoch, optimizer, train_loader, val_dataloader, encoder, iteration,
-                                    logger, args, mean, std)
+                                    logger, args, mean, std, pruning_engine)
         end_epoch_time = time.time() - start_epoch_time
         total_time += end_epoch_time
 
