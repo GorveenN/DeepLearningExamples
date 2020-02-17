@@ -40,6 +40,7 @@ def get_training_parser(default_task='translation'):
     add_checkpoint_args(parser)
     add_generation_args(parser)
     add_perf_args(parser)
+    add_pruning_args(parser)
     return parser
 
 
@@ -352,6 +353,33 @@ def add_interactive_args(parser):
     group = parser.add_argument_group('Interactive')
     group.add_argument('--buffer-size', default=0, type=int, metavar='N',
                        help='read this many sentences into a buffer before processing them')
+
+def add_pruning_args(parser):
+    group = parser.add_argument_group('Pruning')
+    add_common_eval_args(group)
+
+    group.add_argument(
+        "--prune", type=str, action='store_true'
+    )
+
+    group.add_argument(
+        "--no_prune",
+        type=int,
+        default=10,
+        help="Number of neurons to prune every pruning step",
+    )
+    group.add_argument(
+        "--prune_freq",
+        type=int,
+        default=10,
+        help="Number of epochs between pruning steps",
+    )
+    group.add_argument(
+        "--prune_max",
+        type=int,
+        default=-1,
+        help="Pruner won't prune neurons above that threshold"
+    )
 
 
 def add_model_args(parser):

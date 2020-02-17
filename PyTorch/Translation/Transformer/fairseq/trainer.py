@@ -36,6 +36,8 @@ from fairseq import distributed_utils, optim, utils
 from fairseq.meters import AverageMeter, TimeMeter
 from fairseq.optim import lr_scheduler
 
+from pruning.pruner import Pruner
+
 
 class Trainer(object):
     """Main class for data parallel training.
@@ -100,7 +102,8 @@ class Trainer(object):
         return self._optimizer
 
     def _build_optimizer(self):
-        self._optimizer = optim.build_optimizer(self.args, self.model.parameters())
+        parameters = Pruner.filter_gates(self.model.parameters())
+        self._optimizer = optim.build_optimizer(self.args, parameters)
         self.lr_scheduler = lr_scheduler.build_lr_scheduler(self.args, self._optimizer)
 
     def save_checkpoint(self, filename, extra_state):
@@ -138,7 +141,7 @@ class Trainer(object):
 
         return extra_state
 
-    def train_step(self, sample, update_params=True, last_step=False):
+    def train_step(self, sample, update_params=True, last_step=False, pruner=None):
         """Do forward, backward and parameter update."""
         # Set seed based on args.seed and the update number so that we get
         # reproducible results when resuming from checkpoints
@@ -152,6 +155,8 @@ class Trainer(object):
         sample = self._prepare_sample(sample)
         loss, sample_size, logging_output, oom_fwd = self._forward(sample)
         oom_bwd = self._backward(loss)
+
+
 
         # buffer stats and logging outputs
         self._buffered_stats['sample_sizes'].append(sample_size)

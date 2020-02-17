@@ -42,6 +42,8 @@ from . import (
 
 from apex.normalization.fused_layer_norm import FusedLayerNorm
 
+from pruning.gate_layer import GateLayer
+
 
 @torch.jit.script
 def jit_dropout_add(x, residual, prob, is_training) :
@@ -442,7 +444,9 @@ class TransformerEncoderLayer(nn.Module):
         self.fuse_relu_dropout = args.fuse_relu_dropout
         self.normalize_before = args.encoder_normalize_before
         self.fc1 = Linear(self.embed_dim, args.encoder_ffn_embed_dim)
+        self.gate1 = GateLayer(args.encoder_ffn_embed_dim, args.encoder_ffn_embed_dim)
         self.fc2 = Linear(args.encoder_ffn_embed_dim, self.embed_dim)
+        self.gate2 = GateLayer(self.embed_dim, self.embed_dim)
         self.layer_norms = nn.ModuleList([FusedLayerNorm(self.embed_dim) for i in range(2)])
 
 
@@ -461,12 +465,15 @@ class TransformerEncoderLayer(nn.Module):
         residual = x
         x = self.maybe_layer_norm(1, x, before=True)
 
+        x = self.fc1(x)
+        x = self.gate1(x)
         if self.fuse_relu_dropout :
-            x = jit_relu_dropout(self.fc1(x), self.relu_dropout, self.training)
+            x = jit_relu_dropout(x, self.relu_dropout, self.training)
         else :
-            x = F.threshold(self.fc1(x),0,0)
+            x = F.threshold(x,0,0)
             x = F.dropout(x, p=self.relu_dropout, training=self.training)
         x = self.fc2(x)
+        x = self.gate2(x)
 
         if self.fuse_dropout_add and self.training :
             x = jit_dropout_add(x, residual, self.dropout, self.training)
@@ -513,7 +520,9 @@ class TransformerDecoderLayer(nn.Module):
             self.encoder_attn_layer_norm = FusedLayerNorm(self.embed_dim)
 
         self.fc1 = Linear(self.embed_dim, args.decoder_ffn_embed_dim)
+        self.gate1 = GateLayer(args.decoder_ffn_embed_dim, args.decoder_ffn_embed_dim)
         self.fc2 = Linear(args.decoder_ffn_embed_dim, self.embed_dim)
+        self.gate2 = GateLayer(self.embed_dim, self.embed_dim)
 
         self.final_layer_norm = FusedLayerNorm(self.embed_dim)
         self.need_attn = True
@@ -559,12 +568,17 @@ class TransformerDecoderLayer(nn.Module):
 
         residual = x
         x = self.maybe_layer_norm(self.final_layer_norm, x, before=True)
+
+        x = self.fc1(x)
+        x = self.gate1(x)
         if self.fuse_relu_dropout :
-            x = jit_relu_dropout(self.fc1(x), self.relu_dropout, self.training)
+            x = jit_relu_dropout(x, self.relu_dropout, self.training)
         else :
-            x = F.threshold(self.fc1(x),0,0)
+            x = F.threshold(x,0,0)
             x = F.dropout(x, p=self.relu_dropout, training=self.training)
         x = self.fc2(x)
+        x = self.gate2(x)
+
         if self.fuse_dropout_add and self.training :
             x = jit_dropout_add(x, residual, self.dropout, self.training)
         else :

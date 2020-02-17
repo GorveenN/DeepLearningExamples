@@ -42,6 +42,9 @@ from fairseq.data import dictionary
 
 import sacrebleu
 
+from pruning.pruner import Pruner
+from pruning.criterias import taylor_fo_crit
+
 def main(args):
     if not torch.cuda.is_available():
         raise NotImplementedError('Training on CPU is not supported')
@@ -66,6 +69,7 @@ def main(args):
 
     # Build model and criterion
     model = task.build_model(args)
+    pruner = Pruner(model, taylor_fo_crit, args.prune_freq, args.prune_per_iter, args.prune_max) if args.prune else None
     criterion = task.build_criterion(args)
     print('| model {}, criterion {}'.format(args.arch, criterion.__class__.__name__))
     print('| num. model params: {}'.format(sum(p.numel() for p in model.parameters())))
@@ -120,7 +124,7 @@ def main(args):
 
     while lr >= args.min_lr and epoch_itr.epoch < max_epoch and trainer.get_num_updates() < max_update and current_bleu < tgt_bleu:
         # train for one epoch
-        train(args, trainer, task, epoch_itr)
+        train(args, trainer, task, epoch_itr, pruner=pruner)
         if epoch_itr.epoch % args.validate_interval == 0:
             valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
 
@@ -141,7 +145,7 @@ def main(args):
     train_meter.stop()
     print('| done training in {:.1f} seconds'.format(train_meter.sum))
 
-def train(args, trainer, task, epoch_itr):
+def train(args, trainer, task, epoch_itr, pruner):
     """Train the model for one epoch."""
 
     # Initialize data iterator
@@ -167,13 +171,23 @@ def train(args, trainer, task, epoch_itr):
 
         if i < num_batches - 1 and (i + 1) % update_freq > 0:
             # buffer updates according to --update-freq
-            trainer.train_step(sample, update_params=False, last_step=(i == len(itr)-1))
+            trainer.train_step(sample, update_params=False, last_step=(i == len(itr)-1), pruner=pruner)
             continue
         else:
             log_output = trainer.train_step(sample, update_params=True, last_step=(i == len(itr)-1))
 
+        if pruner is not None:
+            with torch.no_grad():
+                pruner.accumulate_importance()
+            if i % pruner.prune_freq == 0:
+                pruner.prune(pruner.prune_per_iter)
+
+
         # log mid-epoch stats
         stats = get_training_stats(trainer)
+        if pruner is not None:
+            stats['pruned'] = pruner.already_pruned
+            stats['to_prune'] = pruner.prune_max - pruner.already_pruned
         for k, v in log_output.items():
             if k in ['loss', 'nll_loss', 'sample_size']:
                 continue  # these are already logged above
