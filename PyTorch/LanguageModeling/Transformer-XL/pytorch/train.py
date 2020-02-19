@@ -42,6 +42,9 @@ from utils.exp_utils import benchmark
 from utils.exp_utils import create_exp_dir
 from utils.exp_utils import log_env_info
 
+from pruning import Pruner
+from pruning.criterias import taylor_fo_crit
+
 
 def parse_args():
     parent_parser = argparse.ArgumentParser(
@@ -223,6 +226,31 @@ def parse_args():
                       default=os.getenv('LOCAL_RANK', 0),
                       help='Used for multi-process training.')
 
+    pruning = parser.add_argument_group('pruning')
+
+    pruning.add_argument(
+        "--prune", type=str, action='store_true'
+    )
+
+    pruning.add_argument(
+        "--no_prune",
+        type=int,
+        default=10,
+        help="Number of neurons to prune every pruning step",
+    )
+    pruning.add_argument(
+        "--prune_freq",
+        type=int,
+        default=10,
+        help="Number of epochs between pruning steps",
+    )
+    pruning.add_argument(
+        "--prune_max",
+        type=int,
+        default=-1,
+        help="Pruner won't prune neurons above that threshold"
+    )
+
     parser.set_defaults(**config)
     args, _ = parser.parse_known_args()
 
@@ -383,7 +411,7 @@ def evaluate(eval_iter, model, args):
 
 def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
           optimizer_sparse, scheduler, scheduler_sparse, vocab, epoch, train_step,
-          best_val_loss, meters, args):
+          best_val_loss, meters, args, pruner=None):
     # Turn on training mode which enables dropout.
     model.train()
 
@@ -391,6 +419,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
     target_tokens = 0
     log_step = 0
     log_start_time = time.time()
+    already_pruned = 0
 
     mems = [None for _ in range(args.batch_chunk)]
     train_iter = tr_iter.get_varlen_iter() if args.varlen else tr_iter
@@ -426,6 +455,13 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
         optimizer.step()
         if optimizer_sparse:
             optimizer_sparse.step()
+
+        if pruner is not None:
+            with torch.no_grad():
+                pruner.accumulate_importance()
+                if i % pruner.prune_freq == 0:
+                    pruner.prune(pruner.prune_per_iter)
+            already_pruned = pruner.already_pruned
 
         # step-wise learning rate annealing
         train_step += 1
@@ -464,7 +500,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
             target_tokens = 0
 
             log_str = '| epoch {:3d} step {:>8d} | batches {:>6d} / {:d} | lr {:.3e} ' \
-                '| ms/batch {:5.1f} | tok/s {:7.0f} | loss {:5.2f}'.format(
+                '| ms/batch {:5.1f} | tok/s {:7.0f} | loss {:5.2f} | pruned {}'.format(
                     epoch,
                     train_step,
                     batch+1,
@@ -473,6 +509,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                     avg_elapsed * 1000,
                     throughput,
                     cur_loss,
+                    already_pruned
                     )
 
             dllogger_data = {
@@ -482,6 +519,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                 'train_time/batch': avg_elapsed * 1000,
                 'train_throughput': throughput,
                 'train_loss': cur_loss,
+                'already_pruned': already_pruned,
                 }
 
             if args.dataset in ['enwik8', 'text8']:
@@ -676,6 +714,7 @@ def main():
         }
 
     model = MemTransformerLM(**model_config)
+    pruner = Pruner(model, taylor_fo_crit, args.prune_freq, args.prune_per_iter, args.prune_max) if args.prune else None
 
     model.apply(functools.partial(weights_init, args=args))
     # ensure embedding init is not overridden by out_layer in case of weight sharing
@@ -688,7 +727,7 @@ def main():
     if args.optim.lower() == 'sgd':
         if args.sample_softmax > 0:
             dense_params, sparse_params = [], []
-            for param in model.parameters():
+            for param in Pruner.filter_gates(model.parameters()):
                 if param.size() == model.word_emb.weight.size():
                     sparse_params.append(param)
                 else:
@@ -702,7 +741,7 @@ def main():
     elif args.optim.lower() == 'adam':
         if args.sample_softmax > 0:
             dense_params, sparse_params = [], []
-            for param in model.parameters():
+            for param in Pruner.filter_gates(model.parameters()):
                 if param.size() == model.word_emb.weight.size():
                     sparse_params.append(param)
                 else:
@@ -711,18 +750,18 @@ def main():
             optimizer = optim.Adam(dense_params, lr=args.lr,
                                    weight_decay=args.weight_decay)
         else:
-            optimizer = optim.Adam(model.parameters(), lr=args.lr,
+            optimizer = optim.Adam(Pruner.filter_gates(model.parameters()), lr=args.lr,
                                    weight_decay=args.weight_decay)
             optimizer_sparse = None
     elif args.optim.lower() == 'adagrad':
-        optimizer = optim.Adagrad(model.parameters(), lr=args.lr)
+        optimizer = optim.Adagrad(Pruner.filter_gates(model.parameters()), lr=args.lr)
         optimizer_sparse = None
     elif args.optim.lower() == 'lamb':
-        optimizer = lamb.Lamb(model.parameters(), lr=args.lr,
+        optimizer = lamb.Lamb(Pruner.filter_gates(model.parameters()), lr=args.lr,
                               weight_decay=args.weight_decay)
         optimizer_sparse = None
     elif args.optim.lower() == 'jitlamb':
-        optimizer = lamb.JITLamb(model.parameters(), lr=args.lr,
+        optimizer = lamb.JITLamb(Pruner.filter_gates(model.parameters()), lr=args.lr,
                                  weight_decay=args.weight_decay)
         optimizer_sparse = None
 
@@ -837,7 +876,7 @@ def main():
             train_step, best_val_loss = train(
                 tr_iter, va_iter, model, para_model, model_config, optimizer,
                 optimizer_sparse, scheduler, scheduler_sparse, vocab, epoch,
-                train_step, best_val_loss, meters, args
+                train_step, best_val_loss, meters, args, pruner
                 )
 
             if train_step == args.max_step:

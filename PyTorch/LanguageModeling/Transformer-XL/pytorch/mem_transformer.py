@@ -20,6 +20,7 @@ from utils.log_uniform_sampler import LogUniformSampler
 from utils.log_uniform_sampler import sample_logits
 from utils.proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
 
+import pruning as pruning
 
 class PositionalEmbedding(nn.Module):
     def __init__(self, demb):
@@ -50,8 +51,10 @@ class PositionwiseFF(nn.Module):
 
         self.CoreNet = nn.Sequential(
             nn.Linear(d_model, d_inner), nn.ReLU(inplace=True),
+            pruning.gate_layer.GateLayer(d_inner, d_inner),
             nn.Dropout(dropout),
             nn.Linear(d_inner, d_model),
+            pruning.gate_layer.GateLayer(d_model, d_model),
             nn.Dropout(dropout),
         )
 
