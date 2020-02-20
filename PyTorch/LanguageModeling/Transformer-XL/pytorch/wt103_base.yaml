@@ -22,7 +22,7 @@ train: &train
    tgt_len: 192
    mem_len: 192
    eval_tgt_len: 192
-   batch_size: 256
+   batch_size: 64
    multi_gpu: ddp
    log_interval: 10
    eval_interval: 5000
