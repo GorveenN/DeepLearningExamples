@@ -42,6 +42,7 @@ from utils.exp_utils import benchmark
 from utils.exp_utils import create_exp_dir
 from utils.exp_utils import log_env_info
 
+import torchvision
 from torch.utils.tensorboard import SummaryWriter
 
 
@@ -835,11 +836,6 @@ def main():
     # Writer will output to ./runs/ directory by default
     writer = SummaryWriter()
 
-    images, labels = next(iter(trainloader))
-
-    grid = torchvision.utils.make_grid(images)
-    writer.add_image('images', grid, 0)
-    writer.add_graph(model, images)
     ###########################################################################
     # Train
     ###########################################################################
