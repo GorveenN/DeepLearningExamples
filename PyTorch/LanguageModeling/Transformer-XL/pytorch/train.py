@@ -42,7 +42,7 @@ from utils.exp_utils import benchmark
 from utils.exp_utils import create_exp_dir
 from utils.exp_utils import log_env_info
 
-from pruning import Pruner
+from pruning.pruner import Pruner
 from pruning.criterias import taylor_fo_crit
 
 
@@ -96,7 +96,7 @@ def parse_args():
                          help='Target validation perplexity (for benchmarking)')
 
     dataset = parser.add_argument_group('dataset setup')
-    dataset.add_argument('--data', type=str, default='../data/wikitext-103',
+    dataset.add_argument('--data', type=str, default='../data/wikitext',
                          help='Location of the data corpus')
     dataset.add_argument('--dataset', type=str, default='wt103',
                          choices=['wt103', 'lm1b', 'enwik8', 'text8'],
@@ -229,7 +229,7 @@ def parse_args():
     pruning = parser.add_argument_group('pruning')
 
     pruning.add_argument(
-        "--prune", type=str, action='store_true'
+        "--prune", action='store_true'
     )
 
     pruning.add_argument(
