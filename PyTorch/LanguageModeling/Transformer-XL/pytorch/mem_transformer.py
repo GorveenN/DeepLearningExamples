@@ -51,10 +51,10 @@ class PositionwiseFF(nn.Module):
 
         self.CoreNet = nn.Sequential(
             nn.Linear(d_model, d_inner), nn.ReLU(inplace=True),
-            pruning.gate_layer.GateLayer(d_inner, d_inner),
+            pruning.gate_layer.GateLayer(d_inner, d_inner, [1, -1]),
             nn.Dropout(dropout),
             nn.Linear(d_inner, d_model),
-            pruning.gate_layer.GateLayer(d_model, d_model),
+            pruning.gate_layer.GateLayer(d_model, d_model, [1, -1]),
             nn.Dropout(dropout),
         )
 
