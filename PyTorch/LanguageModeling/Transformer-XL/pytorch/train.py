@@ -42,6 +42,8 @@ from utils.exp_utils import benchmark
 from utils.exp_utils import create_exp_dir
 from utils.exp_utils import log_env_info
 
+from torch.utils.tensorboard import SummaryWriter
+
 
 def parse_args():
     parent_parser = argparse.ArgumentParser(
@@ -383,7 +385,7 @@ def evaluate(eval_iter, model, args):
 
 def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
           optimizer_sparse, scheduler, scheduler_sparse, vocab, epoch, train_step,
-          best_val_loss, meters, args):
+          best_val_loss, meters, writer, args):
     # Turn on training mode which enables dropout.
     model.train()
 
@@ -555,8 +557,13 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
             # subtract eval time from timers for training
             log_start_time += time.time() - eval_start_time
 
+            writer.add_scalar('Loss/val', val_loss, train_step)
+
         if train_step == args.max_step:
             break
+    
+    writer.add_scalar('Loss/train', train_loss, train_step)
+
     return train_step, best_val_loss
 
 
@@ -824,6 +831,15 @@ def main():
     meters = {}
     warmup = args.mem_len // args.tgt_len + 2
     meters['train_throughput'] = AverageMeter(warmup=warmup)
+
+    # Writer will output to ./runs/ directory by default
+    writer = SummaryWriter()
+
+    images, labels = next(iter(trainloader))
+
+    grid = torchvision.utils.make_grid(images)
+    writer.add_image('images', grid, 0)
+    writer.add_graph(model, images)
     ###########################################################################
     # Train
     ###########################################################################
@@ -837,7 +853,7 @@ def main():
             train_step, best_val_loss = train(
                 tr_iter, va_iter, model, para_model, model_config, optimizer,
                 optimizer_sparse, scheduler, scheduler_sparse, vocab, epoch,
-                train_step, best_val_loss, meters, args
+                train_step, best_val_loss, meters, writer, args
                 )
 
             if train_step == args.max_step:
@@ -847,6 +863,8 @@ def main():
     except KeyboardInterrupt:
         logging.info('-' * 100)
         logging.info('Exiting from training early')
+    
+    writer.close()
     elapsed = time.time() - start_time
 
     ###########################################################################
