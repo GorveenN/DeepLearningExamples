@@ -536,7 +536,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
             dllogger.log(step=train_step, data=dllogger_data)
 
             writer.add_scalar('Loss/train', dllogger_data['train_loss'], train_step)
-            writer.add_scalar('Already pruned', dllogger_data['already_pruned'], train_step)
+            writer.add_scalar('Already_pruned', dllogger_data['already_pruned'], train_step)
 
         if train_step % args.eval_interval == 0:
             eval_start_time = time.time()
