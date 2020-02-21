@@ -535,7 +535,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
             logging.info(log_str)
             dllogger.log(step=train_step, data=dllogger_data)
 
-            writer.add_scalar('Loss/train', train_loss, train_step)
+            writer.add_scalar('Loss/train', dllogger_data['train_loss'], train_step)
             writer.add_scalar('Already pruned', dllogger_data['already_pruned'], train_step)
 
         if train_step % args.eval_interval == 0:
@@ -563,7 +563,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
             else:
                 log_str += ' | valid ppl {:9.3f}'.format(math.exp(val_loss))
                 dllogger_data['valid_perplexity'] = math.exp(val_loss)
-                writer.add_scalar('Perplexity/val', dlogger_data['valid_perplexity'], train_step)
+                writer.add_scalar('Perplexity/val', dllogger_data['valid_perplexity'], train_step)
             logging.info(log_str)
             logging.info('-' * 100)
             dllogger.log(step=train_step, data=dllogger_data)
