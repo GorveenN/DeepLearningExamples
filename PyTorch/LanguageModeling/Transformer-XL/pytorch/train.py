@@ -413,7 +413,7 @@ def evaluate(eval_iter, model, args):
 
 def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
           optimizer_sparse, scheduler, scheduler_sparse, vocab, epoch, train_step,
-          best_val_loss, meters, args, pruner=None, writer):
+          best_val_loss, meters, args, pruner, writer):
     # Turn on training mode which enables dropout.
     model.train()
 
@@ -900,7 +900,7 @@ def main():
     except KeyboardInterrupt:
         logging.info('-' * 100)
         logging.info('Exiting from training early')
-    
+
     writer.close()
     elapsed = time.time() - start_time
 
