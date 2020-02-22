@@ -236,7 +236,14 @@ def parse_args():
     )
 
     pruning.add_argument(
-        "--no_prune",
+        "--prune_warmup",
+        type=int,
+        default=100,
+        help="Number of epoch before pruning",
+    )
+
+    pruning.add_argument(
+        "--prune_no",
         type=int,
         default=10,
         help="Number of neurons to prune every pruning step",
@@ -462,7 +469,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
         if pruner is not None:
             with torch.no_grad():
                 pruner.accumulate_importance()
-                if i % pruner.prune_freq == 0:
+                if i % pruner.prune_freq == 0 and i >= args.prune_warmup:
                     pruner.prune(pruner.prune_per_iter)
             already_pruned = pruner.already_pruned
 
@@ -725,7 +732,7 @@ def main():
         }
 
     model = MemTransformerLM(**model_config)
-    pruner = Pruner(model, taylor_fo_crit, args.prune_freq, args.prune_per_iter, args.prune_max) if args.prune else None
+    pruner = Pruner(model, taylor_fo_crit, args.prune_freq, args.prune_no, args.prune_max) if args.prune else None
 
     model.apply(functools.partial(weights_init, args=args))
     # ensure embedding init is not overridden by out_layer in case of weight sharing
