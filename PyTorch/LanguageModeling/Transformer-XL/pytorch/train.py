@@ -234,16 +234,8 @@ def parse_args():
     pruning.add_argument(
         "--prune", action='store_true'
     )
-
     pruning.add_argument(
-        "--prune_warmup",
-        type=int,
-        default=100,
-        help="Number of epoch before pruning",
-    )
-
-    pruning.add_argument(
-        "--prune_no",
+        "--prune_per_iter",
         type=int,
         default=10,
         help="Number of neurons to prune every pruning step",
@@ -259,6 +251,18 @@ def parse_args():
         type=int,
         default=-1,
         help="Pruner won't prune neurons above that threshold"
+    )
+    pruning.add_argument(
+        "--prune_frac",
+        type=float,
+        default=0.5,
+        help="Pruner won't prune neurons above that fraction of total number of neurons"
+    )
+    pruning.add_argument(
+        "--prune_warmup",
+        type=int,
+        default=100,
+        help="Number of epoch before pruning",
     )
 
     parser.set_defaults(**config)
@@ -430,6 +434,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
     log_step = 0
     log_start_time = time.time()
     already_pruned = 0
+    pruned_frac = 0
 
     mems = [None for _ in range(args.batch_chunk)]
     train_iter = tr_iter.get_varlen_iter() if args.varlen else tr_iter
@@ -469,8 +474,8 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
         if pruner is not None:
             with torch.no_grad():
                 pruner.accumulate_importance()
-                if train_step_prune % pruner.prune_freq == 0 and train_step_prune >= args.prune_warmup:
-                    pruner.prune(pruner.prune_per_iter)
+                if train_step_prune % pruner.prune_freq == 0 and train_step_prune >= pruner.prune_warmup:
+                    _, pruned_frac = pruner.prune(pruner.prune_per_iter)
             already_pruned = pruner.already_pruned
 
         # step-wise learning rate annealing
@@ -511,7 +516,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
             target_tokens = 0
 
             log_str = '| epoch {:3d} step {:>8d} | batches {:>6d} / {:d} | lr {:.3e} ' \
-                '| ms/batch {:5.1f} | tok/s {:7.0f} | loss {:5.2f} | pruned {} | prune_it {}'.format(
+                '| ms/batch {:5.1f} | tok/s {:7.0f} | loss {:5.2f} | pruned {}({:2.2f}%) | prune_it {}'.format(
                     epoch,
                     train_step,
                     batch+1,
@@ -521,6 +526,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                     throughput,
                     cur_loss,
                     already_pruned,
+                    pruned_frac * 100,
                     train_step_prune
                     )
 
@@ -532,6 +538,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                 'train_throughput': throughput,
                 'train_loss': cur_loss,
                 'already_pruned': already_pruned,
+                'pruned_frac' : pruned_frac
                 }
 
             if args.dataset in ['enwik8', 'text8']:
@@ -734,7 +741,15 @@ def main():
         }
 
     model = MemTransformerLM(**model_config)
-    pruner = Pruner(model, taylor_fo_crit, args.prune_freq, args.prune_no, args.prune_max) if args.prune else None
+
+    pruner = Pruner(model,
+                    taylor_fo_crit,
+                    prune_freq=args.prune_freq,
+                    prune_per_iter=args.prune_per_iter,
+                    prune_max=args.prune_max,
+                    prune_frac=args.prune_frac,
+                    prune_warmup=args.prune_warmup
+                    ) if args.prune else None
 
     model.apply(functools.partial(weights_init, args=args))
     # ensure embedding init is not overridden by out_layer in case of weight sharing
