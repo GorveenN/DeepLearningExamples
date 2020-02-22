@@ -876,7 +876,9 @@ def main():
     meters['train_throughput'] = AverageMeter(warmup=warmup)
 
     # Writer will output to ./runs/ directory by default
-    writer = SummaryWriter(log_dir='/results/tensorboard/' + str(datetime.now().time()))
+    tensorboard_log_dir = args.work_dir if args.work_dir[-1] == '/' else args.work_dir + '/'
+    tensorboard_log_dir += 'tensorboard/' + str(datetime.now().time())
+    writer = SummaryWriter(log_dir=tensorboard_log_dir)
 
     ###########################################################################
     # Train
