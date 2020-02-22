@@ -44,6 +44,7 @@ from utils.exp_utils import log_env_info
 
 import torchvision
 from torch.utils.tensorboard import SummaryWriter
+from datetime import datetime
 from pruning.pruner import Pruner
 from pruning.criterias import taylor_fo_crit
 
@@ -875,7 +876,7 @@ def main():
     meters['train_throughput'] = AverageMeter(warmup=warmup)
 
     # Writer will output to ./runs/ directory by default
-    writer = SummaryWriter()
+    writer = SummaryWriter(log_dir='/results/tensorboard/' + str(datetime.now().time()))
 
     ###########################################################################
     # Train
