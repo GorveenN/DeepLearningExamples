@@ -521,7 +521,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                     throughput,
                     cur_loss,
                     already_pruned,
-                    prune_step
+                    train_step_prune
                     )
 
             dllogger_data = {
