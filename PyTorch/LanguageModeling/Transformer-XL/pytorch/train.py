@@ -421,7 +421,7 @@ def evaluate(eval_iter, model, args):
 
 def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
           optimizer_sparse, scheduler, scheduler_sparse, vocab, epoch, train_step,
-          best_val_loss, meters, args, pruner, writer):
+          best_val_loss, meters, args, pruner, writer, train_step_prune):
     # Turn on training mode which enables dropout.
     model.train()
 
@@ -469,12 +469,13 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
         if pruner is not None:
             with torch.no_grad():
                 pruner.accumulate_importance()
-                if i % pruner.prune_freq == 0 and i >= args.prune_warmup:
+                if train_step_prune % pruner.prune_freq == 0 and train_step_prune >= args.prune_warmup:
                     pruner.prune(pruner.prune_per_iter)
             already_pruned = pruner.already_pruned
 
         # step-wise learning rate annealing
         train_step += 1
+        train_step_prune += 1
         if args.scheduler in ['cosine', 'constant', 'dev_perf']:
             # linear warmup stage
             if train_step < args.warmup_step:
@@ -510,7 +511,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
             target_tokens = 0
 
             log_str = '| epoch {:3d} step {:>8d} | batches {:>6d} / {:d} | lr {:.3e} ' \
-                '| ms/batch {:5.1f} | tok/s {:7.0f} | loss {:5.2f} | pruned {}'.format(
+                '| ms/batch {:5.1f} | tok/s {:7.0f} | loss {:5.2f} | pruned {} | prune_it {}'.format(
                     epoch,
                     train_step,
                     batch+1,
@@ -519,7 +520,8 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                     avg_elapsed * 1000,
                     throughput,
                     cur_loss,
-                    already_pruned
+                    already_pruned,
+                    prune_step
                     )
 
             dllogger_data = {
@@ -892,6 +894,7 @@ def main():
     ###########################################################################
     # Loop over epochs.
     # At any point you can hit Ctrl + C to break out of training early.
+    train_step_zero = 0
     start_time = time.time()
     try:
         for epoch in itertools.count(start=1):
@@ -900,7 +903,7 @@ def main():
             train_step, best_val_loss = train(
                 tr_iter, va_iter, model, para_model, model_config, optimizer,
                 optimizer_sparse, scheduler, scheduler_sparse, vocab, epoch,
-                train_step, best_val_loss, meters, args, pruner, writer
+                train_step, best_val_loss, meters, args, pruner, writer, train_step_zero
                 )
 
             if train_step == args.max_step:
