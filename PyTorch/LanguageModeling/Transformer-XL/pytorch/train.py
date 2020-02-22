@@ -435,6 +435,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
     log_start_time = time.time()
     already_pruned = 0
     pruned_frac = 0
+    pruning_iter = 0
 
     mems = [None for _ in range(args.batch_chunk)]
     train_iter = tr_iter.get_varlen_iter() if args.varlen else tr_iter
@@ -472,15 +473,13 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
             optimizer_sparse.step()
 
         if pruner is not None:
-            with torch.no_grad():
-                pruner.accumulate_importance()
-                if train_step_prune % pruner.prune_freq == 0 and train_step_prune >= pruner.prune_warmup:
-                    _, pruned_frac = pruner.prune(pruner.prune_per_iter)
-            already_pruned = pruner.already_pruned
+            pruner.accumulate_importance()
+            it_pruned_no, it_pruned_frac = pruner.prune()
+            already_pruned, pruned_frac = pruner.summary()
+            pruning_iter = pruner.iteration
 
         # step-wise learning rate annealing
         train_step += 1
-        train_step_prune += 1
         if args.scheduler in ['cosine', 'constant', 'dev_perf']:
             # linear warmup stage
             if train_step < args.warmup_step:
@@ -516,7 +515,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
             target_tokens = 0
 
             log_str = '| epoch {:3d} step {:>8d} | batches {:>6d} / {:d} | lr {:.3e} ' \
-                '| ms/batch {:5.1f} | tok/s {:7.0f} | loss {:5.2f} | pruned {}({:2.2f}%) | prune_it {}'.format(
+                '| ms/batch {:5.1f} | tok/s {:7.0f} | loss {:5.2f} | pruned {}({:2.2f}%)({}) '.format(
                     epoch,
                     train_step,
                     batch+1,
@@ -527,7 +526,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                     cur_loss,
                     already_pruned,
                     pruned_frac * 100,
-                    train_step_prune
+                    pruning_iter
                     )
 
             dllogger_data = {
@@ -538,7 +537,8 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                 'train_throughput': throughput,
                 'train_loss': cur_loss,
                 'already_pruned': already_pruned,
-                'pruned_frac' : pruned_frac
+                'pruned_frac' : pruned_frac,
+                'pruning_iter' : pruning_iter
                 }
 
             if args.dataset in ['enwik8', 'text8']:
@@ -554,6 +554,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
 
             writer.add_scalar('Loss/train', dllogger_data['train_loss'], train_step)
             writer.add_scalar('Already_pruned', dllogger_data['already_pruned'], train_step)
+            writer.add_scalar('Pruning_iter', dllogger_data['pruning_iter'], train_step)
 
         if train_step % args.eval_interval == 0:
             eval_start_time = time.time()
