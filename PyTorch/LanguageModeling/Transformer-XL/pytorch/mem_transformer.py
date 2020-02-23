@@ -164,11 +164,17 @@ class RelMultiHeadAttn(nn.Module):
         self.d_head = d_head
         self.dropout = dropout
 
-        self.qkv_net = nn.Linear(d_model, 3 * n_head * d_head, bias=False)
+        self.qkv_net = nn.Sequential(
+            nn.Linear(d_model, 3 * n_head * d_head, bias=False),
+            GateLayer(3 * n_head * d_head, 3 * n_head * d_head, [1, -1])
+        )
 
         self.drop = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
-        self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
+        self.o_net = nn.Sequential(
+            nn.Linear(n_head * d_head, d_model, bias=False),
+            GateLayer(d_model, d_model, [1, -1])
+        )
 
         self.layer_norm = nn.LayerNorm(d_model)
 
@@ -228,7 +234,10 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
     def __init__(self, *args, **kwargs):
         super(RelPartialLearnableMultiHeadAttn, self).__init__(*args, **kwargs)
 
-        self.r_net = nn.Linear(self.d_model, self.n_head * self.d_head, bias=False)
+        self.r_net = nn.Sequential(
+            nn.Linear(self.d_model, self.n_head * self.d_head, bias=False),
+            GateLayer(self.n_head * self.d_head, self.n_head * self.d_head, [1, -1])
+        )
 
     def forward(self, w, r, r_w_bias, r_r_bias, attn_mask=None, mems=None):
         qlen, rlen, bsz = w.size(0), r.size(0), w.size(1)

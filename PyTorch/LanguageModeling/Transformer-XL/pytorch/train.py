@@ -885,7 +885,7 @@ def main():
 
     if args.restart:
         checkpoint = load_checkpoint(args.restart)
-        model.load_state_dict(checkpoint['model_state'])
+        model.load_state_dict(checkpoint['model_state'], strict=False)
         optimizer.load_state_dict(checkpoint['optimizer_state'])
         scheduler.load_state_dict(checkpoint['scheduler_state'])
         if args.fp16:
