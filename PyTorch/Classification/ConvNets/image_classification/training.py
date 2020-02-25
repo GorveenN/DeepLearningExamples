@@ -46,6 +46,8 @@ except ImportError:
         "Please install apex from https://www.github.com/nvidia/apex to run this example."
     )
 
+from pruning.pruner import Pruner
+
 ACC_METADATA = {'unit': '%','format': ':.2f'}
 IPS_METADATA = {'unit': 'img/s', 'format': ':.2f'}
 TIME_METADATA = {'unit': 's', 'format': ':.5f'}
@@ -109,15 +111,15 @@ def get_optimizer(parameters,
 
     if bn_weight_decay:
         print(" ! Weight decay applied to BN parameters ")
-        optimizer = torch.optim.SGD([v for n, v in parameters],
+        optimizer = torch.optim.SGD(Pruner.filter_gates([v for n, v in parameters]),
                                     lr,
                                     momentum=momentum,
                                     weight_decay=weight_decay,
                                     nesterov=nesterov)
     else:
         print(" ! Weight decay NOT applied to BN parameters ")
-        bn_params = [v for n, v in parameters if 'bn' in n]
-        rest_params = [v for n, v in parameters if not 'bn' in n]
+        bn_params = Pruner.filter_gates([v for n, v in parameters if 'bn' in n])
+        rest_params = Pruner.filter_gates([v for n, v in parameters if not 'bn' in n])
         print(len(bn_params))
         print(len(rest_params))
         optimizer = torch.optim.SGD([{
@@ -223,7 +225,8 @@ def get_train_step(model_and_loss,
                    optimizer,
                    fp16,
                    use_amp=False,
-                   batch_size_multiplier=1):
+                   batch_size_multiplier=1,
+                   pruner=None):
     def _step(input, target, optimizer_step=True):
         input_var = Variable(input)
         target_var = Variable(target)
@@ -240,6 +243,9 @@ def get_train_step(model_and_loss,
                 scaled_loss.backward()
         else:
             loss.backward()
+
+        if pruner:
+            pruner.accumulate_importance(step=False)
 
         if optimizer_step:
             opt = optimizer.optimizer if isinstance(
@@ -268,7 +274,8 @@ def train(train_loader,
           use_amp=False,
           prof=-1,
           batch_size_multiplier=1,
-          register_metrics=True):
+          register_metrics=True,
+          pruner=None):
 
     if register_metrics and logger is not None:
         logger.register_metric('train.loss',
@@ -296,7 +303,8 @@ def train(train_loader,
                           optimizer,
                           fp16,
                           use_amp=use_amp,
-                          batch_size_multiplier=batch_size_multiplier)
+                          batch_size_multiplier=batch_size_multiplier,
+                          pruner=pruner)
 
     model_and_loss.train()
     end = time.time()
@@ -317,6 +325,12 @@ def train(train_loader,
         optimizer_step = ((i + 1) % batch_size_multiplier) == 0
         loss = step(input, target, optimizer_step=optimizer_step)
 
+        if pruner:
+            pruner.step()
+            pruned_neurons, pruned_neurons_frac = pruner.prune()
+            pruned_neurons_all, pruned_neurons_frac_all = pruner.summary()
+            pruning_iteration = pruner.iteration
+
         it_time = time.time() - end
 
         if logger is not None:
@@ -328,6 +342,7 @@ def train(train_loader,
             logger.log_metric('train.compute_time', it_time - data_time)
 
         end = time.time()
+
 
 
 def get_val_step(model_and_loss):
@@ -470,7 +485,9 @@ def train_loop(model_and_loss,
                skip_training=False,
                skip_validation=False,
                save_checkpoints=True,
-               checkpoint_dir='./'):
+               checkpoint_dir='./',
+               pruner=None
+               ):
 
     prec1 = -1
 
@@ -489,7 +506,8 @@ def train_loop(model_and_loss,
                   use_amp=use_amp,
                   prof=prof,
                   register_metrics=epoch == start_epoch,
-                  batch_size_multiplier=batch_size_multiplier)
+                  batch_size_multiplier=batch_size_multiplier,
+                  pruner=pruner)
 
         if not skip_validation:
             prec1, nimg = validate(val_loader,

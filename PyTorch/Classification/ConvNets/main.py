@@ -66,6 +66,9 @@ from image_classification.utils import *
 
 import dllogger
 
+from pruning.pruner import Pruner
+from pruning.criterias import taylor_fo_crit
+
 
 def add_parser_arguments(parser):
     model_names = models.resnet_versions.keys()
@@ -253,6 +256,49 @@ def add_parser_arguments(parser):
         metavar='DIR',
         help='path to directory where checkpoints will be stored')
 
+    pruning = parser.add_argument_group('pruning')
+    pruning.add_argument(
+        "--prune", action='store_true'
+    )
+    pruning.add_argument(
+        "--prune_freq",
+        type=int,
+        default=10,
+        help="Number of epochs between pruning steps",
+    )
+    pruning.add_argument(
+        "--prune_warmup",
+        type=int,
+        default=100,
+        help="Number of epoch before pruning",
+    )
+    pruning.add_argument(
+        "--prune_step",
+        type=float,
+        default=0.025,
+        help="Number of neurons to prune every pruning step"
+    )
+    parser.add_argument(
+        '--prune_step_method',
+        default='frac',
+        type=str,
+        choices=Pruner.methods,
+        help="Pruning step computation method"
+    )
+    pruning.add_argument(
+        "--prune_max",
+        type=int,
+        default=0.25,
+        help="Pruner won't prune neurons above that threshold"
+    )
+    parser.add_argument(
+        '--prune_max_method',
+        default='frac',
+        type=str,
+        choices=Pruner.methods,
+        help="Pruning max computation method"
+    )
+
 
 def main(args):
     exp_start_time = time.time()
@@ -354,6 +400,17 @@ def main(args):
                                   pretrained_weights=pretrained_weights,
                                   cuda=True,
                                   fp16=args.fp16)
+
+
+    pruner = Pruner(model_and_loss.model,
+                    taylor_fo_crit,
+                    prune_freq=args.prune_freq,
+                    prune_warmup=args.prune_warmup,
+                    prune_step=args.prune_step,
+                    prune_step_method=args.prune_step_method,
+                    prune_max=args.prune_max,
+                    prune_max_method=args.prune_max_method
+                    )
 
     # Create data loaders and optimizers as needed
     if args.data_backend == 'pytorch':
@@ -457,7 +514,8 @@ def main(args):
                skip_training=args.evaluate,
                skip_validation=args.training_only,
                save_checkpoints=args.save_checkpoints and not args.evaluate,
-               checkpoint_dir=args.workspace)
+               checkpoint_dir=args.workspace,
+               pruner=pruner)
     exp_duration = time.time() - exp_start_time
     if not torch.distributed.is_initialized() or torch.distributed.get_rank(
     ) == 0:
