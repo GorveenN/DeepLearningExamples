@@ -235,34 +235,42 @@ def parse_args():
         "--prune", action='store_true'
     )
     pruning.add_argument(
-        "--prune_per_iter",
-        type=int,
-        default=10,
-        help="Number of neurons to prune every pruning step",
-    )
-    pruning.add_argument(
         "--prune_freq",
         type=int,
         default=10,
         help="Number of epochs between pruning steps",
     )
     pruning.add_argument(
-        "--prune_max",
-        type=int,
-        default=-1,
-        help="Pruner won't prune neurons above that threshold"
-    )
-    pruning.add_argument(
-        "--prune_frac",
-        type=float,
-        default=0.5,
-        help="Pruner won't prune neurons above that fraction of total number of neurons"
-    )
-    pruning.add_argument(
         "--prune_warmup",
         type=int,
         default=100,
         help="Number of epoch before pruning",
+    )
+    pruning.add_argument(
+        "--prune_step",
+        type=float,
+        default=0.025,
+        help="Number of neurons to prune every pruning step"
+    )
+    parser.add_argument(
+        '--prune_step_method',
+        default='frac',
+        type=str,
+        choices=Pruner.methods,
+        help="Pruning step computation method"
+    )
+    pruning.add_argument(
+        "--prune_max",
+        type=int,
+        default=0.25,
+        help="Pruner won't prune neurons above that threshold"
+    )
+    parser.add_argument(
+        '--prune_max_method',
+        default='frac',
+        type=str,
+        choices=Pruner.methods,
+        help="Pruning max computation method"
     )
 
     parser.set_defaults(**config)
@@ -746,10 +754,11 @@ def main():
     pruner = Pruner(model,
                     taylor_fo_crit,
                     prune_freq=args.prune_freq,
-                    prune_per_iter=args.prune_per_iter,
+                    prune_warmup=args.prune_warmup,
+                    prune_step=args.prune_step,
+                    prune_step_method=args.prune_step_method,
                     prune_max=args.prune_max,
-                    prune_frac=args.prune_frac,
-                    prune_warmup=args.prune_warmup
+                    prune_max_method=args.prune_max_method
                     ) if args.prune else None
 
     model.apply(functools.partial(weights_init, args=args))
