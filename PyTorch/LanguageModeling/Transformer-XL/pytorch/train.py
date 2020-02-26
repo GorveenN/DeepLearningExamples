@@ -244,7 +244,7 @@ def parse_args():
         "--prune_freq",
         type=int,
         default=10,
-        help="Number of epochs between pruning steps",
+        help="Number of train steps between pruning steps",
     )
     pruning.add_argument(
         "--prune_max",
@@ -262,7 +262,7 @@ def parse_args():
         "--prune_warmup",
         type=int,
         default=100,
-        help="Number of epoch before pruning",
+        help="Number of train steps before pruning",
     )
 
     parser.set_defaults(**config)
@@ -902,7 +902,7 @@ def main():
 
     # Writer will output to ./runs/ directory by default
     tensorboard_log_dir = args.work_dir if args.work_dir[-1] == '/' else args.work_dir + '/'
-    tensorboard_log_dir += 'tensorboard/' + str(datetime.now().time())
+    tensorboard_log_dir += 'tensorboard/' + str(datetime.now()).replace(' ', '_').replace(':', '-')
     writer = SummaryWriter(log_dir=tensorboard_log_dir)
 
     ###########################################################################
