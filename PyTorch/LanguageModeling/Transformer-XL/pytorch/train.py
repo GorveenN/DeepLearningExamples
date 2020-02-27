@@ -272,6 +272,13 @@ def parse_args():
         choices=Pruner.methods,
         help="Pruning max computation method"
     )
+    pruning.add_argument(
+        '--prune_criteria',
+        type=str,
+        default='taylor_fo',
+        choices=Pruner.criterias,
+        help="Pruning criteria, supported: " + ', '.join(Pruner.criterias)
+    )
 
     parser.set_defaults(**config)
     args, _ = parser.parse_known_args()
@@ -750,6 +757,21 @@ def main():
         }
 
     model = MemTransformerLM(**model_config)
+    
+    prune_criteria = None
+    if args.prune_criteria == "taylor_fo":
+        prune_criteria = taylor_fo_crit
+    elif args.prune_criterias == "ICLR2017_crit":
+        prune_criteria = "ICLR2017_crit"
+    elif args.prune_criterias == "random_crit":
+        prune_criteria = "random_crit"
+    elif args.prune_criterias == "min_weight_crit":
+        prune_criteria = min_weight_crit
+    elif args.prune_criterias == "weight_abs_crit":
+        prune_criteria = weight_abs_crit
+    else:
+        raise "unknown criteria exception"
+
 
     pruner = Pruner(model,
                     taylor_fo_crit,
@@ -758,7 +780,8 @@ def main():
                     prune_step=args.prune_step,
                     prune_step_method=args.prune_step_method,
                     prune_max=args.prune_max,
-                    prune_max_method=args.prune_max_method
+                    prune_max_method=args.prune_max_method,
+                    prune_criteria=prune_criteria
                     ) if args.prune else None
 
     model.apply(functools.partial(weights_init, args=args))
