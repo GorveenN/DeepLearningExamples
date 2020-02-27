@@ -261,7 +261,7 @@ def parse_args():
     )
     pruning.add_argument(
         "--prune_max",
-        type=int,
+        type=float,
         default=0.25,
         help="Pruner won't prune neurons above that threshold"
     )
