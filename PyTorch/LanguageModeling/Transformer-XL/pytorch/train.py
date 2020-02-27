@@ -781,7 +781,7 @@ def main():
                     prune_step_method=args.prune_step_method,
                     prune_max=args.prune_max,
                     prune_max_method=args.prune_max_method,
-                    prune_criteria=prune_criteria
+                    criteria=prune_criteria
                     ) if args.prune else None
 
     model.apply(functools.partial(weights_init, args=args))
