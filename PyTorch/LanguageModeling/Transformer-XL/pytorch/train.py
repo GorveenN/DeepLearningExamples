@@ -761,13 +761,13 @@ def main():
     prune_criteria = None
     if args.prune_criteria == "taylor_fo":
         prune_criteria = taylor_fo_crit
-    elif args.prune_criterias == "ICLR2017_crit":
+    elif args.prune_criteria == "ICLR2017_crit":
         prune_criteria = "ICLR2017_crit"
-    elif args.prune_criterias == "random_crit":
+    elif args.prune_criteria == "random_crit":
         prune_criteria = "random_crit"
-    elif args.prune_criterias == "min_weight_crit":
+    elif args.prune_criteria == "min_weight_crit":
         prune_criteria = min_weight_crit
-    elif args.prune_criterias == "weight_abs_crit":
+    elif args.prune_criteria == "weight_abs_crit":
         prune_criteria = weight_abs_crit
     else:
         raise "unknown criteria exception"
