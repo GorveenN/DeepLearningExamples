@@ -46,7 +46,7 @@ import torchvision
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 from pruning.pruner import Pruner
-from pruning.criterias import taylor_fo_crit
+from pruning.criterias import *
 
 
 def parse_args():
@@ -762,9 +762,9 @@ def main():
     if args.prune_criteria == "taylor_fo":
         prune_criteria = taylor_fo_crit
     elif args.prune_criteria == "ICLR2017_crit":
-        prune_criteria = "ICLR2017_crit"
+        prune_criteria = ICLR2017_crit
     elif args.prune_criteria == "random_crit":
-        prune_criteria = "random_crit"
+        prune_criteria = random_crit
     elif args.prune_criteria == "min_weight_crit":
         prune_criteria = min_weight_crit
     elif args.prune_criteria == "weight_abs_crit":
@@ -774,7 +774,6 @@ def main():
 
 
     pruner = Pruner(model,
-                    taylor_fo_crit,
                     prune_freq=args.prune_freq,
                     prune_warmup=args.prune_warmup,
                     prune_step=args.prune_step,
