@@ -68,7 +68,7 @@ class ModelAndLoss(nn.Module):
         model = models.build_resnet(arch[0], arch[1])
         if pretrained_weights is not None:
             print("=> using pre-trained model from a file '{}'".format(arch))
-            model.load_state_dict(pretrained_weights)
+            model.load_state_dict(pretrained_weights, strict=False)
 
         if cuda:
             model = model.cuda()
@@ -340,7 +340,9 @@ def train(train_loader,
             logger.log_metric('train.total_ips', calc_ips(bs, it_time))
             logger.log_metric('train.data_time', data_time)
             logger.log_metric('train.compute_time', it_time - data_time)
-
+        if (i+1) % 100 == 0:
+            if pruner:
+                print(f'pruned frac {pruned_neurons_frac_all}')
         end = time.time()
 
 
