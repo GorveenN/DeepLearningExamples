@@ -286,16 +286,19 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         )
 
         self.qkv_net[1].set_paired([self.r_net[1]])
+        self.bias_mask = None
 
     def forward(self, w, r, r_w_bias, r_r_bias, attn_mask=None, mems=None):
         qlen, rlen, bsz = w.size(0), r.size(0), w.size(1)
 
         # adjusting r_w_bias and r_r_bias to pruned modules
-        mask = (self.r_net[1].total_mask == True)
-        shape_r_w_bias = r_w_bias.shape
-        r_w_bias = torch.flatten(r_w_bias)[mask].view(shape_r_w_bias)
-        shape_r_r_bias = r_r_bias.shape
-        r_r_bias = torch.flatten(r_r_bias)[mask].view(shape_r_r_bias)
+        #mask = (self.r_net[1].total_mask == True)
+        #shape_r_w_bias = r_w_bias.shape
+        #r_w_bias = torch.flatten(r_w_bias)[mask].view(shape_r_w_bias)
+        #shape_r_r_bias = r_r_bias.shape
+        #r_r_bias = torch.flatten(r_r_bias)[mask].view(shape_r_r_bias)
+        r_w_bias = r_w_bias.flatten()[self.r_net[1].total_mask == True].view(-1, self.d_head)
+        r_r_bias = r_r_bias.flatten()[self.r_net[1].total_mask == True].view(-1, self.d_head)
 
         if mems is not None:
             cat = torch.cat([mems, w], 0)
@@ -318,7 +321,6 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
 
         klen = w_head_k.size(0)
 
-        # TODO: correct this view !!!!!!!!!!!!!!!!!!!!!! IMPORTANT !!!!!!!!!!!!!!!!!!!!!!!!
         w_head_q = w_head_q.view(qlen, bsz, -1, self.d_head)  # qlen x bsz x n_head x d_head
         w_head_k = w_head_k.view(klen, bsz, -1, self.d_head)  # klen x bsz x n_head x d_head
         w_head_v = w_head_v.view(klen, bsz, -1, self.d_head)  # klen x bsz x n_head x d_head
@@ -353,8 +355,7 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         attn_vec = torch.einsum('bnij,jbnd->ibnd', (attn_prob, w_head_v))
 
         # [qlen x bsz x n_head x d_head]
-        attn_vec = attn_vec.contiguous().view(
-            attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head)
+        attn_vec = attn_vec.contiguous().view(attn_vec.size(0), attn_vec.size(1), -1)
 
         # linear projection
         attn_out = self.o_net(attn_vec)
@@ -644,7 +645,7 @@ class MemTransformerLM(nn.Module):
                 if i != n_layer - 1:
                     o_nets_and_ffs.append(decoder.pos_ff.CoreNet[5])
                     # last ff's lin2 won't be pruned
-                
+
                 self.layers.append(decoder)
         # learnable embeddings
         elif attn_type == 1:
