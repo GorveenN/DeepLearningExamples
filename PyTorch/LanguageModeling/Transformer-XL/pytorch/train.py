@@ -759,7 +759,7 @@ def main():
     model = MemTransformerLM(**model_config)
     
     prune_criteria = None
-    if args.prune_criteria == "taylor_fo":
+    if args.prune_criteria == "taylor_fo_crit":
         prune_criteria = taylor_fo_crit
     elif args.prune_criteria == "ICLR2017_crit":
         prune_criteria = ICLR2017_crit
