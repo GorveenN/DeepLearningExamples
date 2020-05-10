@@ -418,10 +418,19 @@ def evaluate(eval_iter, model, args):
     total_len, total_loss = 0, 0.
     with torch.no_grad():
         mems = None
+        runtimes = []
         for i, (data, target, seq_len, warm) in enumerate(eval_iter):
             if args.eval_max_steps > 0 and i >= args.eval_max_steps:
                 break
+
+            torch.cuda.synchronize()
+            start = time.time()
+
             loss, mems = model(data, target, mems)
+
+            torch.cuda.synchronize()
+            stop = time.time()
+            runtimes.append(stop - start)
             loss = loss.float().mean()
             if warm:
                 assert (not mems) or all([m.size(0) == model.mem_len for m in mems])
@@ -435,7 +444,7 @@ def evaluate(eval_iter, model, args):
                        )
     model.train()
 
-    return total_loss / total_len
+    return total_loss / total_len, sum(runtimes)
 
 
 def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
@@ -757,7 +766,7 @@ def main():
         }
 
     model = MemTransformerLM(**model_config)
-    
+
     prune_criteria = None
     if args.prune_criteria == "taylor_fo_crit":
         prune_criteria = taylor_fo_crit
@@ -969,6 +978,7 @@ def main():
     ###########################################################################
     summary = {}
     test_path = os.path.join(args.work_dir, 'checkpoint_best.pt')
+    test_path = os.path.join(args.work_dir, 'checkpoint_last.pt')
     if not args.debug and os.path.exists(test_path):
         # Load the best saved model.
         checkpoint = load_checkpoint(test_path)
@@ -976,28 +986,36 @@ def main():
 
         # Run on test data.
         test_start_time = time.time()
-        test_loss = evaluate(te_iter, model, args)
+        test_loss, test_time = evaluate(te_iter, model, args)
         test_loss = utils.distributed.all_reduce_item(test_loss, 'mean')
         test_elapsed = time.time() - test_start_time
+
+        pruner.export_pruned()
+        model.to(device)
+        test_loss_pruned, test_time_pruned = evaluate(te_iter, model, args)
+        test_loss_pruned = utils.distributed.all_reduce_item(test_loss, 'mean')
 
         logging.info('=' * 100)
         if args.dataset in ['enwik8', 'text8']:
             logging.info('| End of training | test time: {:5.2f}s | test loss {:5.2f} | test bpc {:9.5f}'.format(
                 test_elapsed, test_loss, test_loss / math.log(2)))
         else:
-            logging.info('| End of training | test time: {:5.2f}s | test loss {:5.2f} | test ppl {:9.3f}'.format(
-                test_elapsed, test_loss, math.exp(test_loss)))
+            logging.info('| End of training | test time: {:5.2f}s | test loss {:5.2f} | test time pruned: {:5.2f}s | test loss pruned {:5.2f} | test ppl {:9.3f}'.format(
+                test_time, test_loss, test_time_pruned, test_loss_pruned, math.exp(test_loss)))
         logging.info('=' * 100)
 
         summary.update({
-            'test_elapsed': test_elapsed,
+            'test_elapsed': test_time,
             'test_loss': test_loss,
+            'test_elapsed_pruned': test_time_pruned,
+            'test_loss_pruned': test_loss_pruned,
             })
 
         if args.dataset in ['enwik8', 'text8']:
             summary['test_bits_per_character'] = test_loss / math.log(2)
         else:
             summary['test_perplexity'] = math.exp(test_loss)
+            summary['test_perplexity_pruned'] = math.exp(test_loss_pruned)
 
     logging.info(f'Training time: {(elapsed / 60):.2f} minutes')
     logging.info(f'Training throughput: {meters["train_throughput"].avg:.2f} tok/s')
