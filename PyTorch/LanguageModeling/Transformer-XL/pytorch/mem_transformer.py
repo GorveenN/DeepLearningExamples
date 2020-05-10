@@ -21,6 +21,7 @@ from utils.log_uniform_sampler import sample_logits
 from utils.proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
 
 from pruning.prunection import Prunection
+from pruning.prunode import Prunode
 
 class PositionalEmbedding(nn.Module):
     def __init__(self, demb):
@@ -276,19 +277,20 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         self.r_net = nn.Sequential(
             # nn.Linear(self.d_model, self.n_head * self.d_head, bias=False),
             r,
-            Prunection([nn.Sequential(r)], [], self.n_head * self.d_head, chunk=d_head)
+            Prunection([nn.Sequential(r)], [], self.n_head * self.d_head, chunk=self.d_head)
         )
 
         self.qkv_net[1].set_paired(self.r_net[1])
         self.r_net[1].set_paired(self.qkv_net[1]) # TODO: I don't think it's necessary
+        self.bias_mask = None
 
     # TODO: add masking r_w_bias and r_r_bias
     def forward(self, w, r, r_w_bias, r_r_bias, attn_mask=None, mems=None):
         qlen, rlen, bsz = w.size(0), r.size(0), w.size(1)
 
         # adjusting r_w_bias and r_r_bias to pruned modules
-        r_w_bias = r_w_bias[self.r_net[1].total_mask == True]
-        r_r_bias = r_r_bias[self.r_net[1].total_mask == True]
+        r_w_bias = r_w_bias.flatten()[self.r_net[1].total_mask == True].view(-1, self.d_head)
+        r_r_bias = r_r_bias.flatten()[self.r_net[1].total_mask == True].view(-1, self.d_head)
 
         if mems is not None:
             cat = torch.cat([mems, w], 0)
@@ -311,13 +313,11 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
 
         klen = w_head_k.size(0)
 
-        # TODO: correct this view !!!!!!!!!!!!!!!!!!!!!! IMPORTANT !!!!!!!!!!!!!!!!!!!!!!!!
-        n_heads = sum(self.r_net[1].total_mask)
-        w_head_q = w_head_q.view(qlen, bsz, n_heads, self.d_head)  # qlen x bsz x n_head x d_head
-        w_head_k = w_head_k.view(klen, bsz, n_heads, self.d_head)  # klen x bsz x n_head x d_head
-        w_head_v = w_head_v.view(klen, bsz, n_heads, self.d_head)  # klen x bsz x n_head x d_head
+        w_head_q = w_head_q.view(qlen, bsz, -1, self.d_head)  # qlen x bsz x n_head x d_head
+        w_head_k = w_head_k.view(klen, bsz, -1, self.d_head)  # klen x bsz x n_head x d_head
+        w_head_v = w_head_v.view(klen, bsz, -1, self.d_head)  # klen x bsz x n_head x d_head
 
-        r_head_k = r_head_k.view(rlen, n_heads, self.d_head)       # qlen x n_head x d_head
+        r_head_k = r_head_k.view(rlen, -1, self.d_head)       # qlen x n_head x d_head
 
 
         # compute attention score
@@ -347,8 +347,7 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         attn_vec = torch.einsum('bnij,jbnd->ibnd', (attn_prob, w_head_v))
 
         # [qlen x bsz x n_head x d_head]
-        attn_vec = attn_vec.contiguous().view(
-            attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head)
+        attn_vec = attn_vec.contiguous().view(attn_vec.size(0), attn_vec.size(1), -1)
 
         # linear projection
         attn_out = self.o_net(attn_vec)
@@ -633,12 +632,12 @@ class MemTransformerLM(nn.Module):
                         n_head, d_model, d_head, d_inner, dropout,
                         tgt_len=tgt_len, ext_len=ext_len, mem_len=mem_len,
                         dropatt=dropatt, last=(i==n_layer), pre_lnorm=pre_lnorm)
-                
+
                 o_nets_and_ffs.append(decoder.dec_attn.o_net)
                 if i != n_layer:
                     o_nets_and_ffs.append(decoder.pos_ff.CoreNet[5])
                     # last ff's lin2 won't be pruned
-                
+
                 self.layers.append(decoder)
         # learnable embeddings
         elif attn_type == 1:
@@ -682,7 +681,7 @@ class MemTransformerLM(nn.Module):
 
 
         for i, decoder in enumerate(self.layers):
-            if i != nlayer:
+            if i != self.n_layer:
                 decoder.set_ff_out(o_nets_and_ffs[2 * i + 2])
             decoder.pair_up(o_nets_and_ffs)
 
