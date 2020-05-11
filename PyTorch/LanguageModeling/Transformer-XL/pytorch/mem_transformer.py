@@ -297,8 +297,8 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         #r_w_bias = torch.flatten(r_w_bias)[mask].view(shape_r_w_bias)
         #shape_r_r_bias = r_r_bias.shape
         #r_r_bias = torch.flatten(r_r_bias)[mask].view(shape_r_r_bias)
-        r_w_bias = r_w_bias.flatten()[self.r_net[1].total_mask == True].view(-1, self.d_head)
-        r_r_bias = r_r_bias.flatten()[self.r_net[1].total_mask == True].view(-1, self.d_head)
+        r_w_bias = r_w_bias[self.r_net[1].total_mask == True][]
+        r_r_bias = r_r_bias[self.r_net[1].total_mask == True]
 
         if mems is not None:
             cat = torch.cat([mems, w], 0)
