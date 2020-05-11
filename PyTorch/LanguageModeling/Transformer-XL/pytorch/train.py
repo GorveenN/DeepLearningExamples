@@ -582,7 +582,7 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
 
         if train_step % args.eval_interval == 0:
             eval_start_time = time.time()
-            val_loss = evaluate(va_iter, model, args)
+            val_loss, val_time = evaluate(va_iter, model, args)
             val_loss = utils.distributed.all_reduce_item(val_loss, op='mean')
 
             logging.info('-' * 100)
