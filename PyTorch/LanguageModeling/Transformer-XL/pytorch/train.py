@@ -926,7 +926,7 @@ def main():
     if args.restart:
         checkpoint = load_checkpoint(args.restart)
         model.load_state_dict(checkpoint['model_state'], strict=False)
-        optimizer.load_state_dict(checkpoint['optimizer_state'])
+        #optimizer.load_state_dict(checkpoint['optimizer_state'])
         scheduler.load_state_dict(checkpoint['scheduler_state'])
         if args.fp16:
             amp.load_state_dict(checkpoint['amp_state'])
@@ -982,15 +982,21 @@ def main():
     if not args.debug and os.path.exists(test_path):
         # Load the best saved model.
         checkpoint = load_checkpoint(test_path)
+        logging.info('Before load')
         model.load_state_dict(checkpoint['model_state'])
+        logging.info('After load')
 
         # Run on test data.
         test_start_time = time.time()
+        logging.info('load1')
         test_loss, test_time = evaluate(te_iter, model, args)
+        logging.info('load2')
         test_loss = utils.distributed.all_reduce_item(test_loss, 'mean')
         test_elapsed = time.time() - test_start_time
 
+        logging.info('before export')
         pruner.export_pruned()
+        logging.info('after export')
         model.to(device)
         test_loss_pruned, test_time_pruned = evaluate(te_iter, model, args)
         test_loss_pruned = utils.distributed.all_reduce_item(test_loss, 'mean')

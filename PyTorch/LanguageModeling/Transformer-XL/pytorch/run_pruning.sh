@@ -1,0 +1,1 @@
+bash run_wt103_base.sh train 2 --batch_size 90 --prune --prune_freq 300 --max_step 10000000 --eval_interval 300 --prune_warmup 1000 --prune_max 0.9 --prune_criteria 'taylor_fo_crit' --work_dir /results/transformerXL/relevant/prunection --restart /results/transformerXL/relevant/transformerXL-prunection/checkpoint_best.pt --append_time --log_interval 1 --data /data/wikitext-103

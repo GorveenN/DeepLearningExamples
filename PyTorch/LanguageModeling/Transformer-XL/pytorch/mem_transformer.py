@@ -58,10 +58,10 @@ class PositionwiseFF(nn.Module):
             self.CoreNet = nn.Sequential(
                 lin1,
                 nn.ReLU(inplace=True),
-                Prunection([nn.Sequential(lin1)], [lin2], self.d_inner),
+                Prunection([nn.Sequential(lin1)], [lin2], self.d_inner, name="FF1"),
                 nn.Dropout(dropout),
                 lin2,
-                Prunection([nn.Sequential(lin2)], [], self.d_model),
+                Prunection([nn.Sequential(lin2)], [], self.d_model, name="FF2"),
                 nn.Dropout(dropout),
             )
         else:
@@ -69,7 +69,7 @@ class PositionwiseFF(nn.Module):
             self.CoreNet = nn.Sequential(
                 lin1,
                 nn.ReLU(inplace=True),
-                Prunection([nn.Sequential(lin1)], [lin2], self.d_inner),
+                Prunection([nn.Sequential(lin1)], [lin2], self.d_inner, name="FF3"),
                 nn.Dropout(dropout),
                 lin2,
                 nn.Dropout(dropout)
@@ -199,7 +199,7 @@ class RelMultiHeadAttn(nn.Module):
         self.qkv_net = nn.Sequential(
             qkv,
             # nn.Linear(d_model, 3 * n_head * d_head, bias=False),
-            Prunection([nn.Sequential(qkv)], [], 3 * n_head * d_head, period=n_head * d_head, chunk=d_head)
+            Prunection([nn.Sequential(qkv)], [], 3 * n_head * d_head, period=n_head * d_head, chunk=d_head, name="qkv")
         )
 
         self.drop = nn.Dropout(dropout)
@@ -210,7 +210,7 @@ class RelMultiHeadAttn(nn.Module):
         self.o_net = nn.Sequential(
             o,
             # nn.Linear(n_head * d_head, d_model, bias=False),
-            Prunection([nn.Sequential(o)], [], d_model)
+            Prunection([nn.Sequential(o)], [], d_model, name="o_net")
         )
 
         self.layer_norm = nn.LayerNorm(d_model)
@@ -282,7 +282,7 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         self.r_net = nn.Sequential(
             # nn.Linear(self.d_model, self.n_head * self.d_head, bias=False),
             r,
-            Prunection([nn.Sequential(r)], [], self.n_head * self.d_head, chunk=self.d_head)
+            Prunection([nn.Sequential(r)], [], self.n_head * self.d_head, chunk=self.d_head, name="r_net")
         )
 
         self.qkv_net[1].set_paired([self.r_net[1]])
