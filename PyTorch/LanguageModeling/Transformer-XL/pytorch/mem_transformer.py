@@ -50,30 +50,38 @@ class PositionwiseFF(nn.Module):
         self.d_inner = d_inner
         self.dropout = dropout
 
-        lin1 = Prunode(lambda i,o: nn.Linear(i,o))
+        lin1 = Prunode(lambda i, o: nn.Linear(d_model, o))
 
-        if(not last):
-            lin2 = Prunode(lambda i,o: nn.Linear(i, o))
+        if (not last):
+            lin2 = Prunode(lambda i, o: nn.Linear(i, self.d_model))
 
             self.CoreNet = nn.Sequential(
                 lin1,
                 nn.ReLU(inplace=True),
-                Prunection([nn.Sequential(lin1)], [lin2], self.d_inner, name="FF1"),
+                Prunection([nn.Sequential(lin1)], [lin2],
+                           self.d_inner,
+                           name="FF1"),
                 nn.Dropout(dropout),
                 lin2,
-                Prunection([nn.Sequential(lin2)], [], self.d_model, name="FF2"),
+                Prunection([nn.Sequential(lin2)],
+                           [],
+                           self.d_model,
+                           name="FF2",
+                           mode=False),
                 nn.Dropout(dropout),
             )
         else:
-            lin2 = Prunode(lambda i,o: nn.Linear(i, d_model))
+            lin2 = Prunode(lambda i, o: nn.Linear(i, d_model))
             self.CoreNet = nn.Sequential(
                 lin1,
                 nn.ReLU(inplace=True),
-                Prunection([nn.Sequential(lin1)], [lin2], self.d_inner, name="FF3"),
+                Prunection([nn.Sequential(lin1)],
+                           [lin2],
+                           self.d_inner,
+                           name="FF3"),
                 nn.Dropout(dropout),
                 lin2,
-                nn.Dropout(dropout)
-            )
+                nn.Dropout(dropout))
 
         self.layer_norm = nn.LayerNorm(d_model)
 
@@ -192,26 +200,34 @@ class RelMultiHeadAttn(nn.Module):
         self.dropout = dropout
 
         if not first:
-            qkv = Prunode(lambda i,o: nn.Linear(i, o, bias=False))
+            qkv = Prunode(lambda i,o: nn.Linear(d_model, o, bias=False))
         else:
-            qkv = Prunode(lambda i,o: nn.Linear(d_model, o, bias=False)) 
-       
+            qkv = Prunode(lambda i,o: nn.Linear(d_model, o, bias=False))
+
+        # TODO: before o_net there's a v_net, so we should probably include it in layers preceding o_net
+        o = Prunode(
+            lambda i, o: nn.Linear(n_head * d_head, d_model, bias=False))
+        self.o_net = nn.Sequential(
+            o,
+            # nn.Linear(n_head * d_head, d_model, bias=False),
+            Prunection([nn.Sequential(o)], [],
+                       d_model,
+                       name="o_net",
+                       mode=False))
+
         self.qkv_net = nn.Sequential(
             qkv,
             # nn.Linear(d_model, 3 * n_head * d_head, bias=False),
-            Prunection([nn.Sequential(qkv)], [], 3 * n_head * d_head, period=n_head * d_head, chunk=d_head, name="qkv")
-        )
+            Prunection([nn.Sequential(qkv)], [o],
+                       3 * n_head * d_head,
+                       out_layer_shrink=n_head * d_head,
+                       period=n_head * d_head,
+                       chunk=d_head,
+                       name="qkv"))
 
         self.drop = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
 
-        # TODO: before o_net there's a v_net, so we should probably include it in layers preceding o_net
-        o = Prunode(lambda i,o: nn.Linear(n_head * d_head, o, bias=False))
-        self.o_net = nn.Sequential(
-            o,
-            # nn.Linear(n_head * d_head, d_model, bias=False),
-            Prunection([nn.Sequential(o)], [], d_model, name="o_net")
-        )
 
         self.layer_norm = nn.LayerNorm(d_model)
 
@@ -507,7 +523,7 @@ class RelPartialLearnableDecoderLayer(nn.Module):
         self.pos_ff = PositionwiseFF(d_model, d_inner, dropout, last=last,
                                      pre_lnorm=kwargs.get('pre_lnorm'))
 
-        self.dec_attn.set_o_out(self.pos_ff.CoreNet[0])
+        # self.dec_attn.set_o_out(self.pos_ff.CoreNet[0])
         self.last = last
 
     # layers should contain lin2's from all PositionwiseFF and o_nets from all multiheadattn in the model (maybe except ours?)
@@ -640,11 +656,11 @@ class MemTransformerLM(nn.Module):
                         n_head, d_model, d_head, d_inner, dropout,
                         tgt_len=tgt_len, ext_len=ext_len, mem_len=mem_len,
                         dropatt=dropatt, last=(i==n_layer - 1), first=(i==0), pre_lnorm=pre_lnorm)
-                
-                o_nets_and_ffs.append(decoder.dec_attn.o_net[1])
-                if i != n_layer - 1:
-                    o_nets_and_ffs.append(decoder.pos_ff.CoreNet[5])
-                    # last ff's lin2 won't be pruned
+
+                # o_nets_and_ffs.append(decoder.dec_attn.o_net[1])
+                # if i != n_layer - 1:
+                # o_nets_and_ffs.append(decoder.pos_ff.CoreNet[5])
+                # last ff's lin2 won't be pruned
 
                 self.layers.append(decoder)
         # learnable embeddings
@@ -688,10 +704,10 @@ class MemTransformerLM(nn.Module):
                                                     out_layers_weights=emb_layers)
 
 
-        for i, decoder in enumerate(self.layers):
-            if i != n_layer - 1:
-                decoder.set_ff_out(self.layers[i + 1].dec_attn.qkv_net[0])
-        self.layers[n_layer-2].pair_up(o_nets_and_ffs)
+        # for i, decoder in enumerate(self.layers):
+        #     if i != n_layer - 1:
+        #         decoder.set_ff_out(self.layers[i + 1].dec_attn.qkv_net[0])
+        # self.layers[n_layer-2].pair_up(o_nets_and_ffs)
 
         self.same_length = same_length
         self.clamp_len = clamp_len
