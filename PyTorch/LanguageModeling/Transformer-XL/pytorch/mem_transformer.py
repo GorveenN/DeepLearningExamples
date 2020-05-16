@@ -23,6 +23,8 @@ from utils.proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
 from pruning.prunection import Prunection
 from pruning.prunode import Prunode
 
+#torch.autograd.set_detect_anomaly(True)
+
 class PositionalEmbedding(nn.Module):
     def __init__(self, demb):
         super(PositionalEmbedding, self).__init__()
@@ -53,13 +55,16 @@ class PositionwiseFF(nn.Module):
         lin1 = Prunode(lambda i, o: nn.Linear(d_model, o))
 
         if (not last):
-            lin2 = Prunode(lambda i, o: nn.Linear(i, self.d_model))
+            # TODO: it should be lambda i, o : nn.Linaer(i, o) here, otherwise
+            # forward after actual pruning shouldn't work
+            lin2 = Prunode(lambda i, o: nn.Linear(i, o))
 
             self.CoreNet = nn.Sequential(
                 lin1,
                 nn.ReLU(inplace=True),
                 Prunection([nn.Sequential(lin1)], [lin2],
                            self.d_inner,
+                           mode=True,
                            name="FF1"),
                 nn.Dropout(dropout),
                 lin2,
@@ -67,7 +72,7 @@ class PositionwiseFF(nn.Module):
                            [],
                            self.d_model,
                            name="FF2",
-                           mode=False),
+                           mode=True),
                 nn.Dropout(dropout),
             )
         else:
@@ -90,16 +95,48 @@ class PositionwiseFF(nn.Module):
     def forward(self, inp):
         if self.pre_lnorm:
             # layer normalization + positionwise feed-forward
+            # TODO: boilerplate code
             core_out = self.CoreNet(self.layer_norm(inp))
 
             # residual connection
-            output = core_out + inp
+            output = inp.clone()
+            if isinstance(self.CoreNet[5], Prunection):
+                #output = core_out + inp
+                output_mask = self.CoreNet[5].total_mask == 1
+                #if output_mask.sum() != self.d_model:
+                #    print("?" * 10 + "\ncore_out's shape: {} | output_mask's nonzero elems: {}\n".format(core_out.shape, output_mask.sum()) + "?" * 10)
+                #core_out_mask = self.CoreNet[5].weight == 1
+                output[:, :, output_mask] = output[:, :, output_mask] + core_out #[:, :, core_out_mask])
+            else:
+                output = core_out + inp
         else:
             # positionwise feed-forward
             core_out = self.CoreNet(inp)
 
+            #output = inp.clone()
+            if isinstance(self.CoreNet[5], Prunection):
+                output = inp.clone()
+                #output = inp
+                output_mask = self.CoreNet[5].total_mask == 1
+                #core_out_mask = self.CoreNet[5].weight == 1
+                #if output_mask.sum() != self.d_model:
+                #print("?" * 10 + "\ncore out's shape: {} | output mask's nonzero elems: {}\n".format(core_out.shape, output_mask.sum()) + "?" * 10)
+
+                output[:, :, output_mask] = (output[:, :, output_mask] + core_out) # [:, :, core_out_mask])
+            else:
+                output = core_out + inp
+
+
+            #if isinstance(self.CoreNet[5], Prunection):
+            #    output_mask = self.CoreNet[5].total_mask == 1
+            #    mask_sum = output_mask.sum()
+            #    if mask_sum != self.d_model:
+            #        print("-" * 20 + "\nFF2's output_mask non-zero elems: {} | FF2's linear: {}\n".format(mask_sum, self.CoreNet[5].input_layers[0][0]) + "-" * 20)
+
+            #output = core_out + inp
+
             # residual connection + layer normalization
-            output = self.layer_norm(inp + core_out)
+            output = self.layer_norm(output)
 
         return output
 
@@ -200,20 +237,21 @@ class RelMultiHeadAttn(nn.Module):
         self.dropout = dropout
 
         if not first:
-            qkv = Prunode(lambda i,o: nn.Linear(d_model, o, bias=False))
+            qkv = Prunode(lambda i, o: nn.Linear(d_model, o, bias=False))
         else:
-            qkv = Prunode(lambda i,o: nn.Linear(d_model, o, bias=False))
+            qkv = Prunode(lambda i, o: nn.Linear(d_model, o, bias=False))
 
         # TODO: before o_net there's a v_net, so we should probably include it in layers preceding o_net
         o = Prunode(
-            lambda i, o: nn.Linear(n_head * d_head, d_model, bias=False))
+            # lambda i, o: nn.Linear(n_head * d_head, d_model, bias=False))
+            lambda i, o: nn.Linear(i, o, bias=False))
         self.o_net = nn.Sequential(
             o,
             # nn.Linear(n_head * d_head, d_model, bias=False),
             Prunection([nn.Sequential(o)], [],
                        d_model,
                        name="o_net",
-                       mode=False))
+                       mode=True))
 
         self.qkv_net = nn.Sequential(
             qkv,
@@ -223,6 +261,7 @@ class RelMultiHeadAttn(nn.Module):
                        out_layer_shrink=n_head * d_head,
                        period=n_head * d_head,
                        chunk=d_head,
+                       mode=True,
                        name="qkv"))
 
         self.drop = nn.Dropout(dropout)
@@ -298,7 +337,7 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         self.r_net = nn.Sequential(
             # nn.Linear(self.d_model, self.n_head * self.d_head, bias=False),
             r,
-            Prunection([nn.Sequential(r)], [], self.n_head * self.d_head, chunk=self.d_head, name="r_net")
+            Prunection([nn.Sequential(r)], [], self.n_head * self.d_head, chunk=self.d_head, name="r_net", mode=True, paired=True)
         )
 
         self.qkv_net[1].set_paired([self.r_net[1]])
@@ -376,13 +415,23 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         # linear projection
         attn_out = self.o_net(attn_vec)
         attn_out = self.drop(attn_out)
+        w_mask = (self.o_net[1].total_mask == 1)
+        # attn_out_mask = (self.o_net[1].weight == 1).bool()
+        #print(w_mask.shape)
+        #print(attn_out_mask.shape)
+        #print(w.shape)
+        #print(attn_out.shape)
+
+        # w[:, :, w_mask] += attn_out[:, :, attn_out_mask]
+        w_clone = w.clone()
+        w_clone[:, :, w_mask] = w_clone[:, :, w_mask] + attn_out
 
         if self.pre_lnorm:
             # residual connection
-            output = w + attn_out
+            output = w_clone
         else:
             # residual connection + layer normalization
-            output = self.layer_norm(w + attn_out)
+            output = self.layer_norm(w_clone)
 
         return output
 
