@@ -122,7 +122,7 @@ class PositionwiseFF(nn.Module):
                 #if output_mask.sum() != self.d_model:
                 #print("?" * 10 + "\ncore out's shape: {} | output mask's nonzero elems: {}\n".format(core_out.shape, output_mask.sum()) + "?" * 10)
 
-                output[:, :, output_mask] = (output[:, :, output_mask] + core_out) # [:, :, core_out_mask])
+                output[:, :, output_mask] = output[:, :, output_mask] + core_out # [:, :, core_out_mask])
             else:
                 output = core_out + inp
 
