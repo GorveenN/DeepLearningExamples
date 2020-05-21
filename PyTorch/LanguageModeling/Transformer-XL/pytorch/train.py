@@ -295,23 +295,37 @@ def parse_args():
 
 
 def save_checkpoint(args, model, model_config, optimizer, scheduler, vocab,
-                    train_step, best_val_loss, work_dir, name='checkpoint.pt'):
+                    train_step, best_val_loss, work_dir, name='checkpoint.pt', pruned=None):
     if args.fp16:
         amp_state = amp.state_dict()
     else:
         amp_state = None
 
-    state = {
-        'args': args,
-        'model_config': model_config,
-        'model_state': model.state_dict(),
-        'optimizer_state': optimizer.state_dict(),
-        'scheduler_state': scheduler.state_dict(),
-        'vocab': vocab,
-        'amp_state': amp_state,
-        'train_step': train_step,
-        'best_val_loss': best_val_loss,
-        }
+    if pruned:
+        state = {
+            'args': args,
+            'model_config': model_config,
+            'model_state': model.state_dict(),
+            'optimizer_state': optimizer.state_dict(),
+            'scheduler_state': scheduler.state_dict(),
+            'vocab': vocab,
+            'amp_state': amp_state,
+            'train_step': train_step,
+            'best_val_loss': best_val_loss,
+            'pruned': pruned
+            }
+    else:
+        state = {
+            'args': args,
+            'model_config': model_config,
+            'model_state': model.state_dict(),
+            'optimizer_state': optimizer.state_dict(),
+            'scheduler_state': scheduler.state_dict(),
+            'vocab': vocab,
+            'amp_state': amp_state,
+            'train_step': train_step,
+            'best_val_loss': best_val_loss,
+            }
 
     with utils.distributed.sync_workers() as rank:
         path = os.path.join(work_dir, name)
@@ -397,7 +411,7 @@ def update_dropatt(m, args):
         m.dropatt.p = args.dropatt
 
 
-def evaluate(eval_iter, model, args):
+def evaluate(eval_iter, model, args, string=None, iters=1):
     # Turn on evaluation mode which disables dropout.
     model.eval()
 
@@ -415,27 +429,40 @@ def evaluate(eval_iter, model, args):
                            )
 
     # Evaluation
-    total_len, total_loss = 0, 0.
-    with torch.no_grad():
-        mems = None
-        runtimes = []
-        for i, (data, target, seq_len, warm) in enumerate(eval_iter):
-            if args.eval_max_steps > 0 and i >= args.eval_max_steps:
-                break
+    full_time = 0
+    if string is not None:
+        logging.info((20 * "=") + " " + string + " " + (20 * "="))
+    for _ in range(iters):
+        total_len, total_loss = 0, 0.
+        with torch.no_grad():
+            mems = None
+            runtimes = []
+            start_time = time.time()
+            for i, (data, target, seq_len, warm) in enumerate(eval_iter):
+                if args.eval_max_steps > 0 and i >= args.eval_max_steps:
+                    break
 
-            torch.cuda.synchronize()
-            start = time.time()
+                torch.cuda.synchronize()
+                start = time.time()
 
-            loss, mems = model(data, target, mems)
+                loss, mems = model(data, target, mems)
 
-            torch.cuda.synchronize()
-            stop = time.time()
-            runtimes.append(stop - start)
-            loss = loss.float().mean()
-            if warm:
-                assert (not mems) or all([m.size(0) == model.mem_len for m in mems])
-                total_loss += seq_len * loss.item()
-                total_len += seq_len
+                torch.cuda.synchronize()
+                stop = time.time()
+                runtimes.append(stop - start)
+                loss = loss.float().mean()
+                if warm:
+                    assert (not mems) or all([m.size(0) == model.mem_len for m in mems])
+                    total_loss += seq_len * loss.item()
+                    total_len += seq_len
+
+        total_time = time.time() - start_time
+        full_time += total_time
+        if string is not None:
+            logging.info('Time : {:.2f}s, {:.2f}ms/segment'.format(
+                    total_time, 1000 * total_time / (i+1)))
+    if string is not None:
+        logging.info('Average over {} iteratons | Time : {:.2f}s, {:.2f}ms/segment'.format(iters, full_time / iters, 1000 * full_time / ((i+1) * iters)))
 
     # Switch back to the training mode
     model.reset_length(tgt_len=args.tgt_len,
@@ -617,21 +644,21 @@ def train(tr_iter, va_iter, model, para_model, model_config, optimizer,
                     name = 'checkpoint_best.pt'
                     save_checkpoint(args, model, model_config, optimizer,
                                     scheduler, vocab, train_step,
-                                    best_val_loss, args.work_dir, name)
+                                    best_val_loss, args.work_dir, name, pruned=pruned_frac)
 
             # Always save after eval if save_all is true and not debug
             if not args.debug and args.save_all:
                 name = f'checkpoint_{train_step}.pt'
                 save_checkpoint(args, model, model_config, optimizer,
                                 scheduler, vocab, train_step, best_val_loss,
-                                args.work_dir, name)
+                                args.work_dir, name, pruned_frac)
 
             # Save last checkpoint if not debug and not save_all
             if not args.debug and not args.save_all:
                 name = 'checkpoint_last.pt'
                 save_checkpoint(args, model, model_config, optimizer,
                                 scheduler, vocab, train_step, best_val_loss,
-                                args.work_dir, name)
+                                args.work_dir, name, pruned_frac)
 
             # dev-performance based learning rate annealing
             if args.scheduler == 'dev_perf':
@@ -977,28 +1004,26 @@ def main():
     # Test
     ###########################################################################
     summary = {}
-    test_path = os.path.join(args.work_dir, 'checkpoint_best.pt')
     test_path = os.path.join(args.work_dir, 'checkpoint_last.pt')
     if not args.debug and os.path.exists(test_path):
+        pruned = -1
+        #if checkpoint['pruned']:
+        #    pruned = checkpoint['pruned']
         # Load the best saved model.
+        logging.info("_" * 40)
+        logging.info("Pruned {}".format(pruned))
+        logging.info("_" * 40)
         checkpoint = load_checkpoint(test_path)
-        logging.info('Before load')
         model.load_state_dict(checkpoint['model_state'])
-        logging.info('After load')
 
-        # Run on test data.
         test_start_time = time.time()
-        logging.info('load1')
-        test_loss, test_time = evaluate(te_iter, model, args)
-        logging.info('load2')
+        test_loss, test_time = evaluate(te_iter, model, args, "pre export", iters=10)
         test_loss = utils.distributed.all_reduce_item(test_loss, 'mean')
         test_elapsed = time.time() - test_start_time
 
-        logging.info('before export')
         pruner.export_pruned()
-        logging.info('after export')
         model.to(device)
-        test_loss_pruned, test_time_pruned = evaluate(te_iter, model, args)
+        test_loss_pruned, test_time_pruned = evaluate(te_iter, model, args, "post export", iters=10)
         test_loss_pruned = utils.distributed.all_reduce_item(test_loss, 'mean')
 
         logging.info('=' * 100)
