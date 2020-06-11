@@ -44,6 +44,7 @@ from seq2seq.inference.translator import Translator
 from seq2seq.models.gnmt import GNMT
 from seq2seq.train.smoothing import LabelSmoothing
 from seq2seq.train.table import TrainingTable
+from seq2seq.pruning.pruning_engine import pytorch_pruning, PruningConfigReader, prepare_pruning_list
 
 
 def parse_args():
@@ -208,6 +209,15 @@ def parse_args():
     training.add_argument('--num-buckets', default=5, type=int,
                           help='number of buckets for "bucketing" batching \
                           algorithm')
+    training.add_argument('--name', default='test', type=str,
+                            help='experiment name(folder) to store logs')
+    training.add_argument('--pruning_data', default=None, type=str,
+                            help='file name for storing data from pruning')
+    training.add_argument('--pruning_config', default=None, type=str,
+                        help='path to pruning configuration file, will overwrite all pruning parameters in arguments')
+
+    training.add_argument('--pruning', action='store_true',
+                        help='enable or not pruning, def False')
 
     # optimizer
     optimizer = parser.add_argument_group('optimizer setup')
@@ -509,6 +519,27 @@ def main():
         'init_scale': args.init_scale,
         'upscale_interval': args.upscale_interval
         }
+
+    pruning_engine = None
+    if args.pruning:
+        pruning_settings = dict()
+        if not (args.pruning_config is None):
+            pruning_settings_reader = PruningConfigReader()
+            pruning_settings_reader.read_config(args.pruning_config)
+            pruning_settings = pruning_settings_reader.get_parameters()
+
+        pruning_parameters_list = prepare_pruning_list(pruning_settings, model, model_name="ssd",
+                                                       name=args.name)
+        print("Total pruning layers:", len(pruning_parameters_list))
+
+        log_save_folder = "%s" % args.name
+        folder_to_write = "%s" % log_save_folder + "/"
+        log_folder = folder_to_write
+
+        pruning_engine = pytorch_pruning(pruning_parameters_list, pruning_settings=pruning_settings,
+                                         log_folder=log_folder)
+
+
     trainer_options = dict(
         model=model,
         criterion=criterion,
@@ -527,6 +558,8 @@ def main():
         intra_epoch_eval=args.intra_epoch_eval,
         translator=translator,
         prealloc_mode=args.prealloc_mode,
+        pruning_engine=pruning_engine,
+        file=args.pruning_data,
         )
 
     trainer = trainers.Seq2SeqTrainer(**trainer_options)
@@ -546,6 +579,8 @@ def main():
     training_perf = []
     break_training = False
     test_bleu = None
+
+
     for epoch in range(args.start_epoch, args.epochs):
         logging.info(f'Starting epoch {epoch}')
 

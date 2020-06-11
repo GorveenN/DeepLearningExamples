@@ -27,6 +27,7 @@ import torch.nn as nn
 import seq2seq.data.config as config
 from seq2seq.models.attention import BahdanauAttention
 from seq2seq.utils import init_lstm_
+from seq2seq.pruning.gate_layer import GateLayer
 
 
 class RecurrentAttention(nn.Module):
@@ -149,10 +150,13 @@ class ResidualRecurrentDecoder(nn.Module):
                                           dropout=dropout)
 
         self.rnn_layers = nn.ModuleList()
+        self.gate_layers = nn.ModuleList()
         for _ in range(num_layers - 1):
             self.rnn_layers.append(
                 nn.LSTM(2 * hidden_size, hidden_size, num_layers=1, bias=True,
                         batch_first=batch_first))
+            self.gate_layers.append(
+                GateLayer(hidden_size, hidden_size, [1, -1, 1, 1]))
 
         for lstm in self.rnn_layers:
             init_lstm_(lstm, init_weight)
@@ -229,6 +233,7 @@ class ResidualRecurrentDecoder(nn.Module):
         x = self.dropout(x)
         x, h = self.rnn_layers[0](x, hidden[1])
         self.append_hidden(h)
+        x = self.gate_layers[0](x)
 
         for i in range(1, len(self.rnn_layers)):
             residual = x
@@ -236,6 +241,7 @@ class ResidualRecurrentDecoder(nn.Module):
             x = self.dropout(x)
             x, h = self.rnn_layers[i](x, hidden[i + 1])
             self.append_hidden(h)
+            x = self.gate_layers[i](x)
             x = x + residual
 
         x = self.classifier(x)

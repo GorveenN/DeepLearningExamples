@@ -25,6 +25,7 @@ from torch.nn.utils.rnn import pad_packed_sequence
 
 import seq2seq.data.config as config
 from seq2seq.utils import init_lstm_
+from seq2seq.pruning.gate_layer import GateLayer
 
 
 class ResidualRecurrentEncoder(nn.Module):
@@ -55,6 +56,7 @@ class ResidualRecurrentEncoder(nn.Module):
         super(ResidualRecurrentEncoder, self).__init__()
         self.batch_first = batch_first
         self.rnn_layers = nn.ModuleList()
+        self.gate_layers = nn.ModuleList()
         # 1st LSTM layer, bidirectional
         self.rnn_layers.append(
             nn.LSTM(hidden_size, hidden_size, num_layers=1, bias=True,
@@ -64,12 +66,16 @@ class ResidualRecurrentEncoder(nn.Module):
         self.rnn_layers.append(
             nn.LSTM((2 * hidden_size), hidden_size, num_layers=1, bias=True,
                     batch_first=batch_first))
+        self.gate_layers.append(
+            GateLayer(hidden_size, hidden_size, [1, -1, 1, 1]))
 
         # Remaining LSTM layers
         for _ in range(num_layers - 2):
             self.rnn_layers.append(
                 nn.LSTM(hidden_size, hidden_size, num_layers=1, bias=True,
                         batch_first=batch_first))
+            self.gate_layers.append(
+                GateLayer(hidden_size, hidden_size, [1, -1, 1, 1]))
 
         for lstm in self.rnn_layers:
             init_lstm_(lstm, init_weight)
@@ -102,9 +108,11 @@ class ResidualRecurrentEncoder(nn.Module):
         x, _ = self.rnn_layers[0](x)
         x, _ = pad_packed_sequence(x, batch_first=self.batch_first)
 
+
         # 1st unidirectional layer
         x = self.dropout(x)
         x, _ = self.rnn_layers[1](x)
+        x = self.gate_layers[0](x)
 
         # the rest of unidirectional layers,
         # with residual connections starting from 3rd layer
@@ -112,6 +120,7 @@ class ResidualRecurrentEncoder(nn.Module):
             residual = x
             x = self.dropout(x)
             x, _ = self.rnn_layers[i](x)
+            x = self.gate_layers[i-1](x)
             x = x + residual
 
         return x
